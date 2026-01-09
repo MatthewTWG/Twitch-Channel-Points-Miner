@@ -468,6 +468,8 @@ class Twitch(object):
 
                 streamers_watching = list(streamers_watching)[:max_watch_amount]
 
+                watch_attempts_start_time = time.time()
+
                 for index in streamers_watching:
                     next_iteration = time.time() + CLIENT_WATCH_SECONDS / len(
                         streamers_watching
@@ -633,10 +635,15 @@ class Twitch(object):
                         next_iteration - time.time(), chunk_size=chunk_size
                     )
 
-                if streamers_watching == []:
-                    self.__chuncked_sleep(CLIENT_WATCH_SECONDS, chunk_size=chunk_size)
+                # Ensure we sleep at least 20 seconds, even if we `continue` iteration(s)
+                time_remaining = CLIENT_WATCH_SECONDS - (time.time() - watch_attempts_start_time)
+                if len(streamers_watching) == 0 or time_remaining > 0.01:
+                    self.__chuncked_sleep(time_remaining, chunk_size=chunk_size)
             except Exception:
-                logger.error("Exception raised in send minute watched", exc_info=True)
+                logger.error(
+                    "Exception raised in send minute watched", exc_info=True)
+                # Do a short sleep to avoid error log spam
+                time.sleep(1)
 
     # === CHANNEL POINTS / PREDICTION === #
     # Load the amount of current points for a channel, check if a bonus is available
