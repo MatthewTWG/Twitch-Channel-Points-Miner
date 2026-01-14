@@ -14,7 +14,6 @@ from pathlib import Path
 from secrets import choice, token_hex
 from typing import Dict, Any
 
-from TwitchChannelPointsMiner.classes.ClientSession import ClientSession
 import requests
 import validators
 
