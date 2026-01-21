@@ -192,7 +192,7 @@ class Streamer(object):
         return (
             sum(
                 map(
-                    lambda x: x["factor"],
+                    lambda x: x.factor,
                     self.active_multipliers,
                 ),
             )
