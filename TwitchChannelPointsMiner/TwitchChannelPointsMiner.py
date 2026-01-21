@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -35,6 +36,7 @@ from TwitchChannelPointsMiner.utils import (
     internet_connection_available,
     set_default_settings,
     AttemptStrategy,
+    interruptible_sleep,
 )
 
 # Suppress:
@@ -86,7 +88,7 @@ class TwitchChannelPointsMiner:
         disable_ssl_cert_verification: bool = False,
         disable_at_in_nickname: bool = False,
         # Settings for logging and selenium as you can see.
-        priority: list = [Priority.STREAK, Priority.DROPS, Priority.ORDER],
+        priority: list[Priority] | Priority | None = None,
         # This settings will be global shared trought Settings class
         logger_settings: LoggerSettings = LoggerSettings(),
         # Default values for all streamers
@@ -109,24 +111,19 @@ class TwitchChannelPointsMiner:
 
         Settings.use_hermes = use_hermes
 
-        import socket
-
-        def is_connected():
-            try:
-                # resolve the IP address of the Twitch.tv domain name
-                socket.gethostbyname("twitch.tv")
-                return True
-            except OSError:
-                pass
-            return False
-
-        # check for Twitch.tv connectivity every 5 seconds
+        # Wait for Twitch.tv connectivity with a timeout to avoid hanging forever
         error_printed = False
-        while not is_connected():
+        connectivity_interval = 5
+        connectivity_timeout = 60
+        connectivity_start = time.time()
+        while not internet_connection_available(host="twitch.tv", port=443):
             if not error_printed:
                 logger.error("Waiting for Twitch.tv connectivity...")
                 error_printed = True
-            time.sleep(5)
+            if (time.time() - connectivity_start) >= connectivity_timeout:
+                logger.error("Unable to reach Twitch.tv after 60 seconds, exiting...")
+                sys.exit(0)
+            time.sleep(connectivity_interval)
 
         # Analytics switch
         Settings.enable_analytics = enable_analytics
@@ -163,7 +160,12 @@ class TwitchChannelPointsMiner:
         self.twitch = Twitch(self.username, user_agent, password, gql_factory=gql)
 
         self.claim_drops_startup = claim_drops_startup
-        self.priority = priority if isinstance(priority, list) else [priority]
+        if priority is None:
+            self.priority = [Priority.STREAK, Priority.DROPS, Priority.ORDER]
+        elif isinstance(priority, Priority):
+            self.priority = [priority]
+        else:
+            self.priority = priority
 
         self.streamers: list[Streamer] = []
         self.events_predictions: dict[str, EventPrediction] = {}
@@ -226,44 +228,55 @@ class TwitchChannelPointsMiner:
 
     def mine(
         self,
-        streamers: list = [],
-        blacklist: list = [],
+        streamers: list[Streamer | str] | None = None,
+        blacklist: list[str] | None = None,
         followers: bool = False,
         followers_order: FollowersOrder = FollowersOrder.ASC,
     ):
-        self.run(streamers=streamers, blacklist=blacklist, followers=followers)
+        self.run(
+            streamers=streamers,
+            blacklist=blacklist,
+            followers=followers,
+            followers_order=followers_order,
+        )
 
     def run(
         self,
-        streamers: list = [],
-        blacklist: list = [],
+        streamers: list[Streamer | str] | None = None,
+        blacklist: list[str] | None = None,
         followers: bool = False,
         followers_order: FollowersOrder = FollowersOrder.ASC,
     ):
         if self.running:
             logger.error("You can't start multiple sessions of this instance!")
-        else:
-            logger.info(
-                f"Start session: '{self.session_id}'", extra={"emoji": ":bomb:"}
-            )
-            self.running = True
-            self.start_datetime = datetime.now()
+            return
 
+        streamers_input = list(streamers) if streamers is not None else []
+        blacklist_input = list(blacklist) if blacklist is not None else []
+
+        logger.info(f"Start session: '{self.session_id}'", extra={"emoji": ":bomb:"})
+        self.running = True
+        self.start_datetime = datetime.now()
+
+        try:
             self.twitch.login()
 
             if self.claim_drops_startup is True:
                 self.twitch.claim_all_drops_from_inventory()
 
+            def normalize_login(name: str) -> str:
+                return name.lower().strip().replace(" ", "")
+
             streamers_name: list = []
             streamers_dict: dict = {}
 
-            for streamer in streamers:
+            for streamer in streamers_input:
                 username = (
-                    streamer.username
+                    normalize_login(streamer.username)
                     if isinstance(streamer, Streamer)
-                    else streamer.lower().strip()
+                    else normalize_login(str(streamer))
                 )
-                if username not in blacklist:
+                if username not in blacklist_input:
                     streamers_name.append(username)
                     streamers_dict[username] = streamer
 
@@ -274,58 +287,83 @@ class TwitchChannelPointsMiner:
                     extra={"emoji": ":clipboard:"},
                 )
                 for username in followers_array:
-                    if username not in streamers_dict and username not in blacklist:
-                        streamers_name.append(username)
-                        streamers_dict[username] = username.lower().strip()
+                    if (
+                        username not in streamers_dict
+                        and normalize_login(username) not in blacklist_input
+                    ):
+                        norm = normalize_login(username)
+                        streamers_name.append(norm)
+                        streamers_dict[norm] = norm
 
             logger.info(
                 f"Loading data for {len(streamers_name)} streamers. Please wait...",
                 extra={"emoji": ":nerd_face:"},
             )
-            for username in streamers_name:
-                if username in streamers_name:
-                    time.sleep(random.uniform(0.3, 0.7))
-                    try:
-                        streamer = (
-                            streamers_dict[username]
-                            if isinstance(streamers_dict[username], Streamer) is True
-                            else Streamer(username)
-                        )
-                        streamer.channel_id = self.twitch.get_channel_id(username)
-                        streamer.settings = set_default_settings(
-                            streamer.settings, Settings.streamer_settings
-                        )
-                        streamer.settings.bet = set_default_settings(
-                            streamer.settings.bet, Settings.streamer_settings.bet
-                        )
-                        if streamer.settings.chat != ChatPresence.NEVER:
-                            streamer.irc_chat = ThreadChat(
-                                self.username,
-                                self.twitch.client_session.login.get_auth_token(),
-                                streamer.username,
+            load_workers = max(1, min(10, len(streamers_name))) if streamers_name else 0
+
+            def build_streamer(username: str):
+                streamer_obj = streamers_dict[username]
+                streamer = (
+                    streamer_obj
+                    if isinstance(streamer_obj, Streamer) is True
+                    else Streamer(username)
+                )
+                streamer.channel_id = self.twitch.get_channel_id(username)
+                streamer.settings = set_default_settings(
+                    streamer.settings, Settings.streamer_settings
+                )
+                streamer.settings.bet = set_default_settings(
+                    streamer.settings.bet, Settings.streamer_settings.bet
+                )
+                if streamer.settings.chat != ChatPresence.NEVER:
+                    streamer.irc_chat = ThreadChat(
+                        self.username,
+                        self.twitch.client_session.login.get_auth_token(),
+                        streamer.username,
+                    )
+                return streamer
+
+            streamers_loaded: list[None | Streamer] = [None] * len(streamers_name)
+            if streamers_name:
+                with ThreadPoolExecutor(max_workers=load_workers or 1) as executor:
+                    futures = {
+                        executor.submit(build_streamer, username): index
+                        for index, username in enumerate(streamers_name)
+                    }
+                    for future in as_completed(futures):
+                        index = futures[future]
+                        username = streamers_name[index]
+                        try:
+                            streamers_loaded[index] = future.result()
+                        except StreamerDoesNotExistException:
+                            logger.info(
+                                f"Streamer {username} does not exist",
+                                extra={"emoji": ":cry:"},
                             )
-                        self.streamers.append(streamer)
-                    except StreamerDoesNotExistException:
-                        logger.info(
-                            f"Streamer {username} does not exist",
-                            extra={"emoji": ":cry:"},
-                        )
+                        except Exception:
+                            logger.error(
+                                f"Failed to load streamer {username}", exc_info=True
+                            )
+
+            self.streamers = [
+                streamer for streamer in streamers_loaded if streamer is not None
+            ]
 
             # Populate the streamers with default values.
             # 1. Load channel points and auto-claim bonus
             # 2. Check if streamers are online
             # 3. DEACTIVATED: Check if the user is a moderator. (was used before the 5th of April 2021 to deactivate predictions)
-            for streamer in self.streamers:
-                time.sleep(random.uniform(0.3, 0.7))
-                try:
-                    self.twitch.load_channel_points_context(streamer)
-                    self.twitch.check_streamer_online(streamer)
-                    # self.twitch.viewer_is_mod(streamer)
-                except StreamerDoesNotExistException:
-                    logger.info(
-                        f"Streamer {streamer.username} does not exist",
-                        extra={"emoji": ":cry:"},
-                    )
+            invalid_streamers = self.twitch.initialize_streamers_context(self.streamers)
+            if invalid_streamers:
+                self.streamers = [
+                    streamer
+                    for streamer in self.streamers
+                    if streamer.username not in invalid_streamers
+                ]
+                if not self.streamers:
+                    logger.error("No valid streamers available after initialization.")
+                    self.end(0, 0)
+                    return
 
             self.original_streamers = [
                 streamer.channel_points for streamer in self.streamers
@@ -339,8 +377,8 @@ class TwitchChannelPointsMiner:
             # If we have at least one streamer with settings = claim_drops True
             # Spawn a thread for sync inventory and dashboard
             if (
-                    at_least_one_value_in_settings_is(self.streamers, "claim_drops", True)
-                    is True
+                at_least_one_value_in_settings_is(self.streamers, "claim_drops", True)
+                is True
             ):
                 self.sync_campaigns_thread = threading.Thread(
                     target=self.twitch.sync_campaigns,
@@ -348,7 +386,6 @@ class TwitchChannelPointsMiner:
                 )
                 self.sync_campaigns_thread.name = "Sync campaigns/inventory"
                 self.sync_campaigns_thread.start()
-                time.sleep(30)
 
             self.minute_watcher_thread = threading.Thread(
                 target=self.twitch.send_minute_watched_events,
@@ -364,7 +401,7 @@ class TwitchChannelPointsMiner:
                     twitch=self.twitch,
                     request_encoder=hermes_data.JsonEncoder(),
                     response_decoder=hermes_data.JsonDecoder(),
-                    listeners=pubsub_handlers
+                    listeners=pubsub_handlers,
                 )
             else:
                 self.ws_pool = PubSubWebSocketPool(twitch=self.twitch, listeners=pubsub_handlers)
@@ -421,7 +458,7 @@ class TwitchChannelPointsMiner:
 
             refresh_context = time.time()
             while self.running:
-                time.sleep(random.uniform(20, 60))
+                interruptible_sleep(lambda: self.running, random.uniform(20, 60))
                 self.ws_pool.check_stale_connections()
                 if ((time.time() - refresh_context) // 60) >= 30:
                     refresh_context = time.time()
@@ -430,6 +467,8 @@ class TwitchChannelPointsMiner:
                             self.twitch.load_channel_points_context(
                                 self.streamers[index]
                             )
+        finally:
+            self.running = False
 
     def end(self, signum, frame):
         if not self.running:

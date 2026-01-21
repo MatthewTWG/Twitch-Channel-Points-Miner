@@ -7,7 +7,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from os import path
 from random import randrange
-from typing import TypeVar, Iterable
+from typing import TypeVar, Iterable, Callable
 
 import requests
 from millify import millify as package_millify
@@ -275,3 +275,14 @@ def format_timestamp(timestamp: datetime) -> str:
     """
     return f"{timestamp:%Y-%m-%dT%H:%M:%S}.{timestamp.microsecond // 1000:03d}Z"
 
+
+def interruptible_sleep(running_flag: Callable[[], bool], duration: float, step=1.0):
+    """
+    Sleeps for the given amount of time or until `running_flag` returns False.
+    :param running_flag: A function that returns True while we should continue sleeping.
+    :param duration: The maximum duration of the sleep.
+    :param step: The amount of time in between checks to see if we should stop sleeping.
+    """
+    target = time.time() + duration
+    while running_flag() and time.time() < target:
+        time.sleep(max(0.0, min(step, target - time.time())))

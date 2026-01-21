@@ -10,12 +10,12 @@ import random
 import re
 import string
 import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed, Future
 from pathlib import Path
 from secrets import choice, token_hex
 from typing import Dict, Any
 
 import requests
-import validators
 
 from TwitchChannelPointsMiner.classes.ClientSession import ClientSession
 from TwitchChannelPointsMiner.classes.Exceptions import (
@@ -48,11 +48,12 @@ from TwitchChannelPointsMiner.constants import (
 from TwitchChannelPointsMiner.utils import (
     millify,
     internet_connection_available,
+    interruptible_sleep,
 )
 
 logger = logging.getLogger(__name__)
-JsonType = Dict[str, Any]
 
+STREAMER_INIT_TIMEOUT_PER_STREAMER = 5  # seconds
 CLIENT_WATCH_SECONDS = 20
 
 
@@ -259,11 +260,8 @@ class Twitch(object):
     # === 'GLOBALS' METHODS === #
     # Create chunk of sleep of speed-up the break loop after CTRL+C
     def __chuncked_sleep(self, seconds, chunk_size=3):
-        sleep_time = max(seconds, 0) / chunk_size
-        for i in range(0, chunk_size):
-            time.sleep(sleep_time)
-            if self.running is False:
-                break
+        step = max(seconds / max(chunk_size, 1), 0.5)
+        interruptible_sleep(lambda: self.running, seconds, step=step)
 
     def __check_connection_handler(self, chunk_size):
         # The success rate It's very high usually. Why we have failed?
@@ -525,7 +523,6 @@ class Twitch(object):
                                             for hook in Settings.logger.hooks:
                                                 hook.send(combined_message, Events.DROP_STATUS)
 
-
                     except requests.exceptions.ConnectionError as e:
                         logger.error(f"Error while trying to send minute watched: {e}")
                         self.__check_connection_handler(chunk_size)
@@ -572,6 +569,59 @@ class Twitch(object):
 
         if streamer.settings.community_goals is True:
             self.contribute_to_community_goals(streamer)
+
+    def initialize_streamers_context(self, streamers: list[Streamer], max_workers=10) -> set[str]:
+        """
+        Initializes the context for the given Streamers. Loads the channel points context and checks if they're online.
+        Parallelizes execution across the given number of worker threads.
+        :param streamers: The Streamers to initialize.
+        :param max_workers: The maximum number of worker threads.
+        :return: The usernames of any Streamers that failed to initialize.
+        """
+        if not streamers:
+            return set()
+
+        failed_streamers: set[str] = set()
+
+        def _load_streamer_context(streamer):
+            time.sleep(random.uniform(0.15, 0.35))
+            self.load_channel_points_context(streamer)
+            self.check_streamer_online(streamer)
+
+        # Initialize channel context in parallel so large streamer lists do not block startup
+        workers = max(1, min(max_workers, len(streamers)))
+        timeout_seconds = STREAMER_INIT_TIMEOUT_PER_STREAMER * len(streamers)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures: dict[Future[None], Streamer] = {
+                executor.submit(_load_streamer_context, streamer): streamer
+                for streamer in streamers
+            }
+            try:
+                for future in as_completed(futures, timeout=timeout_seconds):
+                    streamer = futures[future]
+                    try:
+                        future.result()
+                    except StreamerDoesNotExistException:
+                        failed_streamers.add(streamer.username)
+                        logger.info(
+                            f"Streamer {streamer.username} does not exist",
+                            extra={"emoji": ":cry:"},
+                        )
+                    except Exception:
+                        failed_streamers.add(streamer.username)
+                        logger.error(
+                            f"Failed to initialize streamer {streamer.username}",
+                            exc_info=True,
+                        )
+            except TimeoutError:
+                logger.error(
+                    "Timed out while initializing streamers after %s seconds.",
+                    timeout_seconds,
+                )
+                for future, streamer in futures.items():
+                    if not future.done():
+                        failed_streamers.add(streamer.username)
+        return failed_streamers
 
     def make_predictions(self, event):
         decision = event.bet.calculate(event.streamer.channel_points)
