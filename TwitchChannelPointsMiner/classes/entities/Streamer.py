@@ -171,7 +171,8 @@ class Streamer(object):
         self.history[reason_code]["counter"] += counter
         self.history[reason_code]["amount"] += earned
 
-        if reason_code == "WATCH_STREAK":
+        if self.stream.watch_streak_missing and reason_code in {"WATCH_STREAK", "WATCH"}:
+            # Getting a WATCH is enough to start/continue a streak
             self.stream.watch_streak_missing = False
 
     def stream_up_elapsed(self):
