@@ -13,7 +13,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, TimeoutError, as_completed, Future
 from pathlib import Path
 from secrets import choice, token_hex
-from typing import Dict, Any
 
 import requests
 
@@ -108,16 +107,25 @@ class Twitch(object):
             )
 
     # === STREAMER / STREAM / INFO === #
-    def update_stream(self, streamer):
+    def update_stream(self, streamer: Streamer):
         if streamer.stream.update_required() is True:
-            stream_info = self.get_stream_info(streamer)
-            if stream_info is not None and stream_info.stream is not None:
+            stream_info, is_live_info, watch_streak_milestone = self.get_stream_info(
+                streamer
+            )
+            if (
+                stream_info is not None
+                and stream_info.stream is not None
+                and is_live_info is not None
+                and is_live_info.stream is not None
+            ):
                 streamer.stream.update(
                     broadcast_id=stream_info.stream.id,
                     title=stream_info.broadcast_settings.title,
                     game=stream_info.broadcast_settings.game,
                     tags=stream_info.stream.tags,
                     viewers_count=stream_info.stream.viewers_count,
+                    created_at=is_live_info.stream.created_at,
+                    watch_streak_milestone=watch_streak_milestone,
                 )
 
                 event_properties = {
@@ -175,17 +183,23 @@ class Twitch(object):
         :raises StreamerIsOfflineException: If the streamer is offline.
         """
         try:
-            response = self.gql.video_player_stream_info_overlay_channel(
+            info_response = self.gql.video_player_stream_info_overlay_channel(
                 streamer.username
             )
+            is_live_response = self.gql.with_is_stream_live_query(streamer.channel_id)
+            reward_list_response = self.gql.reward_list(streamer.channel_id)
         except RetryError as e:
             logger.error(f"Error getting stream info for {streamer.username}: {e}")
             raise e
-        if response.user.stream is None:
+        if info_response.user.stream is None:
             # There is no stream data, so they're offline
             raise StreamerIsOfflineException
         else:
-            return response.user
+            return (
+                info_response.user,
+                is_live_response.user,
+                reward_list_response.channel.self.watch_streak_milestone,
+            )
 
     def check_streamer_online(self, streamer):
         if time.time() < streamer.offline_at + 60:

@@ -36,6 +36,9 @@ from TwitchChannelPointsMiner.classes.gql.data.response.PlaybackAccessToken impo
 from TwitchChannelPointsMiner.classes.gql.data.response.Predictions import (
     MakePredictionResponse,
 )
+from TwitchChannelPointsMiner.classes.gql.data.response.RewardList import (
+    RewardListResponse,
+)
 from TwitchChannelPointsMiner.classes.gql.data.response.VideoPlayerStreamInfoOverlayChannel import (
     VideoPlayerStreamInfoOverlayChannelResponse,
 )
@@ -519,6 +522,37 @@ class GQL:
             GQLOperations.ContributeCommunityPointsCommunityGoal["operationName"],
             json_data,
             self.parser.parse_contribute_community_points_community_goal,
+        )
+
+    def with_is_stream_live_query(self, channel_id: str):
+        """
+        Gets basic information about the current stream.
+        :param channel_id: The id of the channel to check.
+        :return: The response.
+        :raises RetryError: If one or more errors occurred while attempting the request.
+        """
+        json_data = copy.deepcopy(GQLOperations.WithIsStreamLiveQuery)
+        json_data["variables"] = {
+            "id": channel_id,
+        }
+        return self.post_gql_request_single(
+            GQLOperations.WithIsStreamLiveQuery["operationName"],
+            json_data,
+            self.parser.parse_with_is_stream_live_query,
+        )
+
+    def reward_list(self, channel_id: str) -> RewardListResponse:
+        """
+        Gets the user's Rewards for the given channel. Useful for getting info on watch streak milestones.
+        :param channel_id: The id of the channel.
+        :return: The response.
+        """
+        json_data = copy.deepcopy(GQLOperations.RewardList)
+        json_data["variables"]["channelID"] = channel_id
+        return self.post_gql_request_single(
+            GQLOperations.RewardList["operationName"],
+            json_data,
+            self.parser.parse_reward_list,
         )
 
 

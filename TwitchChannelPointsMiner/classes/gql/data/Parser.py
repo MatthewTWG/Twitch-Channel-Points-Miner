@@ -1,4 +1,5 @@
 import datetime
+import re
 from typing import Callable, Any, ContextManager
 
 from TwitchChannelPointsMiner.classes.gql.Errors import (
@@ -10,6 +11,8 @@ from TwitchChannelPointsMiner.classes.gql.data.response import (
     Predictions,
     Drops,
     PlaybackAccessToken,
+    WithIsStreamLiveQuery,
+    RewardList,
 )
 from TwitchChannelPointsMiner.classes.gql.data.response.BroadcastSettings import (
     BroadcastSettings,
@@ -39,10 +42,16 @@ from TwitchChannelPointsMiner.classes.gql.data.response.Pagination import (
 from TwitchChannelPointsMiner.classes.gql.data.response.PlaybackAccessToken import (
     PlaybackAccessTokenResponse,
 )
+from TwitchChannelPointsMiner.classes.gql.data.response.RewardList import (
+    RewardListResponse,
+)
 from TwitchChannelPointsMiner.classes.gql.data.response.Stream import Stream, Tag
 from TwitchChannelPointsMiner.classes.gql.data.response.VideoPlayerStreamInfoOverlayChannel import (
     User,
     VideoPlayerStreamInfoOverlayChannelResponse,
+)
+from TwitchChannelPointsMiner.classes.gql.data.response.WithIsStreamLiveQuery import (
+    WithIsStreamLiveQueryResponse,
 )
 
 
@@ -131,6 +140,19 @@ def expect_iso_8601(value: Any) -> datetime.datetime:
     :raises InvalidJsonShapeException: if the value is not a valid ISO8601 string.
     """
     value = expect_str(value)
+
+    # Twitch sends timestamps with nano precision instead of micro
+    if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,9}Z", value):
+        # drop the last 3 digits
+        dot_index = value.rindex(".")
+        value_start = value[:dot_index]
+        nano_seconds = value[dot_index + 1:-1]
+        nano_seconds = nano_seconds[:-3]
+        value = (
+            f"{value_start}.{nano_seconds}Z"
+            if len(nano_seconds) > 0
+            else f"{value_start}Z"
+        )
 
     for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
         try:
@@ -595,6 +617,71 @@ def goal_contribution_parser(value: Any) -> ChannelPointsContext.GoalContributio
     )
 
 
+def with_is_stream_live_query_stream_parser(value: Any) -> WithIsStreamLiveQuery.Stream:
+    expect_dict(value)
+    return WithIsStreamLiveQuery.Stream(
+        _id=parse_expected_value(value, "id", expect_str),
+        created_at=parse_expected_value(value, "createdAt", expect_iso_8601),
+    )
+
+
+def with_is_stream_live_query_user_parser(value: Any) -> WithIsStreamLiveQuery.User:
+    expect_dict(value)
+    return WithIsStreamLiveQuery.User(
+        _id=parse_expected_value(value, "id", expect_str),
+        stream=parse_expected_value(
+            value, "stream", optional_parser(with_is_stream_live_query_stream_parser)
+        ),
+    )
+
+
+def reward_list_viewer_milestone_parser(value: Any) -> RewardList.ViewerMilestone:
+    expect_dict(value)
+    return RewardList.ViewerMilestone(
+        _id=parse_expected_value(value, "id", expect_str),
+        value=parse_expected_value(value, "value", expect_str),
+        achievement_timestamp=parse_expected_value(
+            value, "achievementTimestamp", optional_parser(expect_iso_8601)
+        ),
+        share_status=parse_expected_value(value, "shareStatus", expect_str),
+    )
+
+
+def reward_list_watch_streak_milestone_parser(
+    value: Any,
+) -> RewardList.WatchStreakMilestone:
+    expect_dict(value)
+    return RewardList.WatchStreakMilestone(
+        viewer_milestone=parse_expected_value(
+            value, "watchStreakMilestone", reward_list_viewer_milestone_parser
+        ),
+        threshold=parse_expected_value(value, "watchStreakThreshold", expect_int),
+        copo_bonus=parse_expected_value(value, "watchStreakCopoBonus", expect_int),
+        state=parse_expected_value(value, "state", expect_str),
+        expires_at=parse_expected_value(
+            value, "expiresAt", optional_parser(expect_iso_8601)
+        ),
+    )
+
+
+def reward_list_channel_self_parser(value: Any) -> RewardList.Channel.SelfEdge:
+    expect_dict(value)
+    return RewardList.Channel.SelfEdge(
+        watch_streak_milestone=parse_expected_value(
+            value, "watchStreakMilestone", reward_list_watch_streak_milestone_parser
+        )
+    )
+
+
+def reward_list_channel_parser(value: Any) -> RewardList.Channel:
+    expect_dict(value)
+    _id = parse_expected_value(value, "id", expect_str)
+    return RewardList.Channel(
+        _id=_id,
+        _self=parse_expected_value(value, "self", reward_list_channel_self_parser),
+    )
+
+
 class Parser:
     """Class that can parse responses from the Twitch GQL API."""
 
@@ -903,3 +990,35 @@ class Parser:
                         contribute, "error", optional_parser(expect_str)
                     ),
                 )
+
+    def parse_with_is_stream_live_query(
+        self, response: Any
+    ) -> WithIsStreamLiveQueryResponse:
+        """
+        Parses responses to WithIsStreamLiveQuery requests.
+        :param response: The response to parse.
+        :return: The parsed response.
+        :raises GQLError: If the response contains errors or there is an issue parsing the response.
+        """
+        _, _, data = self.parse_base_response(response, True)
+        with JsonParentContext("data"):
+            return WithIsStreamLiveQueryResponse(
+                user=parse_expected_value(
+                    data, "user", with_is_stream_live_query_user_parser
+                )
+            )
+
+    def parse_reward_list(self, response: Any) -> RewardListResponse:
+        """
+        Parses responses to RewardList requests.
+        :param response: The response to parse.
+        :return: The parsed response.
+        :raises GQLError: If the response contains errors or there is an issue parsing the response.
+        """
+        _, _, data = self.parse_base_response(response, True)
+        with JsonParentContext("data"):
+            return RewardList.RewardListResponse(
+                channel=parse_expected_value(
+                    data, "channel", reward_list_channel_parser
+                ),
+            )

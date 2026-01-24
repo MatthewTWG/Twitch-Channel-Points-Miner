@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from base64 import b64encode
+from datetime import datetime
 
 from TwitchChannelPointsMiner.classes.Settings import Settings
 from TwitchChannelPointsMiner.classes.entities.Campaign import Campaign
@@ -9,6 +10,7 @@ from TwitchChannelPointsMiner.classes.gql import Tag
 from TwitchChannelPointsMiner.classes.gql.data.response.BroadcastSettings import (
     GameBroadcastSettings,
 )
+from TwitchChannelPointsMiner.classes.gql.data.response.RewardList import WatchStreakMilestone
 from TwitchChannelPointsMiner.constants import DROP_ID
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ class Stream(object):
         "minute_watched",
         "__last_update",
         "__minute_watched_timestamp",
+        "created_at"
     ]
 
     def __init__(self):
@@ -49,6 +52,8 @@ class Stream(object):
         self.spade_url: str | None = None
         self.payload = None
 
+        self.created_at: datetime | None = None
+
         self.init_watch_streak()
 
     def encode_payload(self) -> dict:
@@ -62,6 +67,8 @@ class Stream(object):
         game: GameBroadcastSettings | None,
         tags: list[Tag],
         viewers_count: int,
+        created_at: datetime,
+        watch_streak_milestone: WatchStreakMilestone | None,
     ):
         self.broadcast_id = broadcast_id
         self.title = title.strip()
@@ -70,6 +77,16 @@ class Stream(object):
         self.tags = tags or []
         # ------------------------
         self.viewers_count = viewers_count
+        self.created_at = created_at
+
+        if watch_streak_milestone is not None and self.watch_streak_missing:
+            # Don't bother updating if we've already got the streak
+            last_streak_achievement_timestamp = (
+                watch_streak_milestone.viewer_milestone.achievement_timestamp
+            )
+            if last_streak_achievement_timestamp is not None and last_streak_achievement_timestamp > created_at:
+                # We've got a streak going + it was last achieved during this stream
+                self.watch_streak_missing = False
 
         self.drops_tags = (DROP_ID in [tag.id for tag in self.tags]) and (
             self.game is not None
