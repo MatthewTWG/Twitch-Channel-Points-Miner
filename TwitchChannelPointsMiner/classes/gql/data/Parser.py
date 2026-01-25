@@ -262,6 +262,7 @@ def error_parser(value: Any) -> Error:
         "service timeout",
         "service unavailable",
         "context deadline exceeded",
+        "PersistedQueryUnavailable",
     ]
     return Error(
         recoverable, message, parse_value(value, "path", list_parser(expect_str))
