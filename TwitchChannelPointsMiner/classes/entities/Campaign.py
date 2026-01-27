@@ -75,3 +75,6 @@ class Campaign(object):
                         claimed = callback(self.drops[i])
                         self.drops[i].is_claimed = claimed
                     break
+
+    def any_drop_claimable(self):
+        return any(drop for drop in self.drops if drop.is_claimable)

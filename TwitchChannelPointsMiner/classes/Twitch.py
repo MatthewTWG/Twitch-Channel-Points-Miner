@@ -440,26 +440,25 @@ class Twitch(object):
                         """
                         for index in streamers_index:
                             if (
-                                    streamers[index].settings.watch_streak is True
-                                    and streamers[index].stream.watch_streak_missing is True
-                                    and (
+                                streamers[index].settings.watch_streak is True
+                                and streamers[index].stream.watch_streak_missing is True
+                                and (
                                     streamers[index].offline_at == 0
                                     or (
-                                            (time.time() -
-                                             streamers[index].offline_at)
-                                            // 60
+                                        (time.time() - streamers[index].offline_at)
+                                        // 60
                                     )
                                     > 30
-                            )
-                                    # fix #425
-                                    and streamers[index].stream.minute_watched < 7
+                                )
+                                # fix #425
+                                and streamers[index].stream.minute_watched < 7
                             ):
                                 if not add_to_watching(index):
                                     break
 
                     elif priority == Priority.DROPS:
                         for index in streamers_index:
-                            if streamers[index].drops_condition() is True:
+                            if streamers[index].any_campaign_has_claimable_drop() is True:
                                 if not add_to_watching(index):
                                     break
 
@@ -888,7 +887,7 @@ class Twitch(object):
 
                 # Check if user It's currently streaming the same game present in campaigns_details
                 for i in range(0, len(streamers)):
-                    if streamers[i].drops_condition() is True:
+                    if streamers[i].should_sync_campaigns() is True:
                         # yes! The streamer[i] have the drops_tags enabled and we It's currently stream a game with campaign active!
                         # With 'campaigns_ids' we are also sure that this streamer have the campaign active.
                         # yes! The streamer[index] have the drops_tags enabled and we It's currently stream a game with campaign active!

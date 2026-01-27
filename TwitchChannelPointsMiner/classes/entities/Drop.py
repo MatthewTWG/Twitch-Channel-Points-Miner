@@ -76,7 +76,7 @@ class Drop(object):
         self.drop_instance_id = progress.drop_instance_id
         self.is_claimed = progress.is_claimed
         self.is_claimable = (
-            self.is_claimed is False and self.drop_instance_id is not None
+            self.is_claimed is False and self.drop_instance_id is not None and self.subs_required == 0
         )
         self.percentage_progress = updated_percentage
 

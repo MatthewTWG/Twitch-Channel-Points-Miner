@@ -144,7 +144,6 @@ class Streamer(object):
         if self.is_online is False:
             self.online_at = time.time()
             self.is_online = True
-            self.stream.init_watch_streak()
 
         self.toggle_chat()
 
@@ -178,12 +177,18 @@ class Streamer(object):
     def stream_up_elapsed(self):
         return self.stream_up == 0 or ((time.time() - self.stream_up) > 120)
 
-    def drops_condition(self):
+    def should_sync_campaigns(self):
         return (
             self.settings.claim_drops is True
             and self.is_online is True
-            # and self.stream.drops_tags is True
             and self.stream.campaigns_ids != []
+        )
+
+    def any_campaign_has_claimable_drop(self):
+        return (
+            self.settings.claim_drops is True
+            and self.is_online is True
+            and any(campaign for campaign in self.stream.campaigns if campaign.any_drop_claimable())
         )
 
     def viewer_has_points_multiplier(self):
