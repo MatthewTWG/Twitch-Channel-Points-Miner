@@ -92,7 +92,7 @@ class AttemptStrategy:
         validate: Callable[[TResult], None],
         retryable: Callable[[Exception], bool],
         exception_context: Callable[[Exception], str | None],
-    ) -> SuccessResult | ErrorResult:
+    ) -> SuccessResult[TResult] | ErrorResult:
         """
         Calls `attempt` up to `self.attempts` times until either a successful attempt is made or the maximum number of
         attempts have been made.

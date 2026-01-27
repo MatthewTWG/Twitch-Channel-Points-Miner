@@ -14,7 +14,7 @@ from TwitchChannelPointsMiner.classes.gql.Errors import (
     RetryError,
     InvalidJsonShapeException,
 )
-from TwitchChannelPointsMiner.classes.gql.data.Parser import Parser
+from TwitchChannelPointsMiner.classes.gql.data.Parser import Parser, JsonParentContext
 from TwitchChannelPointsMiner.classes.gql.data.response.ChannelPointsContext import (
     ChannelPointsContextResponse,
     UserPointsContributionResponse,
@@ -92,10 +92,38 @@ def parse_list[T](parse: Callable[[Any], T], value: Any) -> list[T]:
     Utility for parsing a list
     :param parse: Parser for the list item type.
     :param value: The value to parse.
-    :return:
+    :return: The resultant list.
+    :raises InvalidJsonShapeException: If the value is not a list.
     """
     if isinstance(value, list):
-        return [parse(item) for item in value]
+        result = []
+        for index in range(len(value)):
+            with JsonParentContext(index):
+                result.append(parse(value[index]))
+        return result
+    raise InvalidJsonShapeException([], "list expected")
+
+
+def parse_list_sub_parsers(parsers: list[Callable[[Any], Any]], value: Any) -> list:
+    """
+    Utility for parsing a list where each item is parsed using the subparser at the same index in the given list.
+    :param parsers: The indexed list of subparsers.
+    :param value: The value which should be a list of items parsable by the subparsers.
+    :return: The resultant list.
+    :raises InvalidJsonShapeException: If the value is not a list or the value's length doesn't match the parser's
+            length.
+    """
+    if isinstance(value, list):
+        if len(value) != len(parsers):
+            raise InvalidJsonShapeException(
+                [],
+                f"List length ({len(value)}) does not match parsers length ({len(parsers)})",
+            )
+        result = []
+        for index in range(len(parsers)):
+            with JsonParentContext(index):
+                result.append(parsers[index](value[index]))
+        return result
     raise InvalidJsonShapeException([], "list expected")
 
 
@@ -132,9 +160,7 @@ class GQL:
         self.post_request = requests.post if post_request is None else post_request
         """Function for posting GQL requests."""
 
-    def __post_gql_request[T](
-        self, request_json: dict | list, parse: Callable[[Any], T]
-    ) -> T | list[T]:
+    def __post_gql_request(self, request_json: dict | list[dict]) -> Any:
         response = self.post_request(
             GQLOperations.url,
             json=request_json,
@@ -151,17 +177,38 @@ class GQL:
             f"Data: {request_json}, Status code: {response.status_code}, Content: {response.text}"
         )
         response.raise_for_status()
-        response_json = response.json()
-        if isinstance(request_json, list):
-            # A batched request should result in a batched response
-            if isinstance(response_json, list):
-                return list(map(parse, response_json))
-            else:
-                raise InvalidJsonShapeException(
-                    [], f"Expected batched response, got {type(response_json).__name__}"
-                )
+        return response.json()
+
+    def __post_gql_request_single[T](
+        self, request_json: dict, parse: Callable[[Any], T]
+    ):
+        return parse(self.__post_gql_request(request_json))
+
+    def __post_gql_request_batch[T](
+        self,
+        request_json: list[dict],
+        parser: Callable[[Any], T],
+    ):
+        response_json = self.__post_gql_request(request_json)
+        if isinstance(response_json, list):
+            return parse_list(parser, response_json)
         else:
-            return parse(response_json)
+            raise InvalidJsonShapeException(
+                [], f"Expected batched response, got {type(response_json).__name__}"
+            )
+
+    def __post_gql_request_batch_mapped[T](
+        self,
+        request_json: list[dict],
+        parsers: list[Callable[[Any], Any]],
+    ):
+        response_json = self.__post_gql_request(request_json)
+        if isinstance(response_json, list):
+            return parse_list_sub_parsers(parsers, response_json)
+        else:
+            raise InvalidJsonShapeException(
+                [], f"Expected batched response, got {type(response_json).__name__}"
+            )
 
     @staticmethod
     def __handle_result[T](
@@ -183,15 +230,15 @@ class GQL:
         self, operation_name: str, request_json: dict, parse: Callable[[Any], T]
     ) -> T:
         """
-        Posts the given GQL request. Handles automatic retries according to the `retry_strategy`.
+        Posts the given GQL request. Handles automatic retries according to the `attempt_strategy`.
         :param operation_name: The name of the GQL operation.
         :param request_json: The data to send.
         :param parse: The function to use to parse the data.
-        :return: The parsed response, either a single object or a list if the request was a list.
+        :return: The parsed response.
         :raises RetryError: If one or more errors occurred while attempting the request.
         """
         result = self.attempt_strategy.make_attempts(
-            lambda: self.__post_gql_request(request_json, parse),
+            lambda: self.__post_gql_request_single(request_json, parse),
             validate_response,
             is_recoverable_error,
             error_context,
@@ -199,25 +246,47 @@ class GQL:
         return self.__handle_result(result, operation_name)
 
     def post_gql_request_batch[T](
-        self, operation_name: str, request_json: list[dict], parse: Callable[[Any], T]
+        self, operation_name: str, request_json: list[dict], parser: Callable[[Any], T]
     ) -> list[T]:
         """
-        Posts the given GQL request batch. Handles automatic retries according to the `retry_strategy`.
+        Posts the given GQL request batch. Every item represents the same operation. Handles automatic retries according
+        to the `attempt_strategy`.
         :param operation_name: The name of the GQL operation.
         :param request_json: The data to send as a list of the batched items.
-        :param parse: The function to use to parse the data.
-        :return: The parsed response, either a single object or a list if the request was a list.
+        :param parser: The function to use to parse each item in the response list.
+        :return: The parsed response as a list.
         :raises RetryError: If one or more errors occurred while attempting the request.
         """
         result = self.attempt_strategy.make_attempts(
-            lambda: self.__post_gql_request(
-                request_json, lambda value: parse_list(parse, value)
-            ),
+            lambda: self.__post_gql_request_batch(request_json, parser),
             validate_response,
             is_recoverable_error,
             error_context,
         )
-        return self.__handle_result(result, operation_name)
+        return self.__handle_result(result, f"Batch {operation_name}")
+
+    def post_gql_request_batch_mapped(
+        self,
+        operation_names: list[str],
+        request_json: list[dict],
+        parser: list[Callable[[Any], Any]],
+    ) -> list:
+        """
+        Posts the given GQL request batch. Handles automatic retries according to the `attempt_strategy`.
+        When the `parser` is a list we parse the response by matching the index of the parser to the index of each
+        response item.
+        :param operation_names: The names of each operation.
+        :param request_json: The data to send as a list of the batched items.
+        :param parser: The function(s) to use to parse the data.
+        :return: The parsed response as a list.
+        """
+        result = self.attempt_strategy.make_attempts(
+            lambda: self.__post_gql_request_batch_mapped(request_json, parser),
+            validate_response,
+            is_recoverable_error,
+            error_context,
+        )
+        return self.__handle_result(result, f"Batch {operation_names}")
 
     def video_player_stream_info_overlay_channel(
         self, streamer_username: str
