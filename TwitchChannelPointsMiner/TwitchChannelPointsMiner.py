@@ -15,6 +15,10 @@ from pathlib import Path
 import TwitchChannelPointsMiner.classes.websocket.hermes.data as hermes_data
 from TwitchChannelPointsMiner.classes.Chat import ChatPresence, ThreadChat
 from TwitchChannelPointsMiner.classes.PubSub import PubSubHandler
+from TwitchChannelPointsMiner.classes.StreamerSelector import (
+    StreamerSelector,
+    PrioritySelector,
+)
 from TwitchChannelPointsMiner.classes.entities.EventPrediction import EventPrediction
 from TwitchChannelPointsMiner.classes.entities.PubsubTopic import PubsubTopic
 from TwitchChannelPointsMiner.classes.entities.Streamer import (
@@ -65,7 +69,7 @@ class TwitchChannelPointsMiner:
         "enable_analytics",
         "disable_ssl_cert_verification",
         "disable_at_in_nickname",
-        "priority",
+        "streamer_selector",
         "streamers",
         "events_predictions",
         "minute_watcher_thread",
@@ -88,7 +92,7 @@ class TwitchChannelPointsMiner:
         disable_ssl_cert_verification: bool = False,
         disable_at_in_nickname: bool = False,
         # Settings for logging and selenium as you can see.
-        priority: list[Priority] | Priority | None = None,
+        priority: StreamerSelector | list[Priority] | Priority | None = None,
         # This settings will be global shared trought Settings class
         logger_settings: LoggerSettings = LoggerSettings(),
         # Default values for all streamers
@@ -160,12 +164,16 @@ class TwitchChannelPointsMiner:
         self.twitch = Twitch(self.username, user_agent, password, gql_factory=gql)
 
         self.claim_drops_startup = claim_drops_startup
+
+        # Convert priority setting into a StreamerSelector
         if priority is None:
-            self.priority = [Priority.STREAK, Priority.DROPS, Priority.ORDER]
+            self.streamer_selector = PrioritySelector([Priority.STREAK, Priority.DROPS, Priority.ORDER])
         elif isinstance(priority, Priority):
-            self.priority = [priority]
+            self.streamer_selector = PrioritySelector([priority])
+        elif isinstance(priority, StreamerSelector):
+            self.streamer_selector = priority
         else:
-            self.priority = priority
+            self.streamer_selector = PrioritySelector(priority)
 
         self.streamers: list[Streamer] = []
         self.events_predictions: dict[str, EventPrediction] = {}
@@ -389,7 +397,7 @@ class TwitchChannelPointsMiner:
 
             self.minute_watcher_thread = threading.Thread(
                 target=self.twitch.send_minute_watched_events,
-                args=(self.streamers, self.priority),
+                args=(self.streamers, self.streamer_selector),
             )
             self.minute_watcher_thread.name = "Minute watcher"
             self.minute_watcher_thread.start()
