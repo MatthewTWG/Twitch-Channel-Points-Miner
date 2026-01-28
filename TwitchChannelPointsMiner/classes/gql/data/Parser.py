@@ -146,7 +146,7 @@ def expect_iso_8601(value: Any) -> datetime.datetime:
         # drop the last 3 digits
         dot_index = value.rindex(".")
         value_start = value[:dot_index]
-        nano_seconds = value[dot_index + 1:-1]
+        nano_seconds = value[dot_index + 1 : -1]
         nano_seconds = nano_seconds[:-3]
         value = (
             f"{value_start}.{nano_seconds}Z"
@@ -255,6 +255,18 @@ def dig[T](value: Any, path: list[str], and_then: Callable[[Any], T]) -> T:
 # Parsers for GQL response types
 
 
+def error_path_item_parser(value: Any) -> str | int:
+    try:
+        return expect_int(value)
+    except InvalidJsonShapeException:
+        try:
+            return expect_str(value)
+        except InvalidJsonShapeException:
+            raise InvalidJsonShapeException(
+                [], f"string or int expected, got {describe_value(value)}"
+            )
+
+
 def error_parser(value: Any) -> Error:
     expect_dict(value)
     message = parse_expected_value(value, "message", expect_str)
@@ -265,7 +277,9 @@ def error_parser(value: Any) -> Error:
         "PersistedQueryUnavailable",
     ]
     return Error(
-        recoverable, message, parse_value(value, "path", list_parser(expect_str))
+        recoverable,
+        message,
+        parse_value(value, "path", list_parser(error_path_item_parser)),
     )
 
 
