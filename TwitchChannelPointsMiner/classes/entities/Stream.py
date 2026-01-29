@@ -70,6 +70,10 @@ class Stream(object):
         created_at: datetime,
         watch_streak_milestone: WatchStreakMilestone | None,
     ):
+        if self.broadcast_id is not broadcast_id:
+            # Different stream, reset watch time
+            self.init_watch_streak()
+
         self.broadcast_id = broadcast_id
         self.title = title.strip()
         self.game = game

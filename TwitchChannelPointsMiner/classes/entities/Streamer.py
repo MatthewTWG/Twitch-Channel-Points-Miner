@@ -91,22 +91,31 @@ class Streamer(object):
         "mutex",
     ]
 
-    def __init__(self, username, settings=None):
+    def __init__(
+        self,
+        username: str,
+        channel_id: str | None = None,
+        channel_points: int | None = None,
+        stream: Stream | None = None,
+        offline_at: float | None = None,
+        active_multipliers: list[Properties.Multiplier] | None = None,
+        settings: StreamerSettings | None = None,
+    ):
         self.username: str = username.lower().strip()
-        self.channel_id: str = ""
+        self.channel_id: str = channel_id if channel_id is not None else ""
         self.settings = settings
         self.is_online = False
         self.stream_up = 0
         self.online_at = 0
-        self.offline_at = 0
-        self.channel_points = 0
+        self.offline_at = offline_at if offline_at is not None else 0.0
+        self.channel_points = channel_points if channel_points is not None else 0
         self.community_goals = {}
         self.minute_watched_requests = None
         self.viewer_is_mod = False
-        self.active_multipliers: list[Properties.Multiplier] | None = None
+        self.active_multipliers = active_multipliers
         self.irc_chat = None
 
-        self.stream = Stream()
+        self.stream = stream if stream is not None else Stream()
 
         self.raid = None
         self.history = {}

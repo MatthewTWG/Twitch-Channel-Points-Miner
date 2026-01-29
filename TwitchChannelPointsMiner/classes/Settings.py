@@ -10,6 +10,18 @@ class Priority(Enum):
     POINTS_DESCENDING = auto()
 
 
+class PriorityGroup:
+    """Priority(s) to be applied over a given list of streamers."""
+
+    def __init__(
+        self, priority: list[Priority], streamers: list[str] | None = None
+    ) -> None:
+        self.priority = priority
+        """The priority(s) of the streamers(s) to select."""
+        self.streamers = streamers
+        """The streamers in the group. Applies to all streamers if None."""
+
+
 class FollowersOrder(Enum):
     ASC = auto()
     DESC = auto()

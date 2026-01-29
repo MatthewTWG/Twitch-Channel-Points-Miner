@@ -368,45 +368,54 @@ class Twitch(object):
         streamer_selector: StreamerSelector,
         chunk_size=3,
     ):
+
+        def find_streamer(channel_id: str) -> Streamer:
+            for streamer in streamers:
+                if streamer.channel_id == channel_id:
+                    return streamer
+            raise KeyError(
+                f"Streamer with channel_id ({channel_id}) not found in streamer list."
+            )
+
         while self.running:
             try:
-                streamers_index = [
-                    i
-                    for i in range(0, len(streamers))
-                    if streamers[i].is_online is True
-                    and (
-                        streamers[i].online_at == 0
-                        or (time.time() - streamers[i].online_at) > 30
+                online_streamers = [
+                    streamer for streamer in streamers
+                    if streamer.is_online is True
+                       and (
+                        streamer.online_at == 0
+                        or (time.time() - streamer.online_at) > 30
                     )
                 ]
 
-                for index in streamers_index:
-                    if (streamers[index].stream.update_elapsed() / 60) > 10:
+                for streamer in online_streamers:
+                    if (streamer.stream.update_elapsed() / 60) > 10:
                         # Why this user It's currently online but the last updated was more than 10minutes ago?
                         # Please perform a manually update and check if the user it's online
-                        self.check_streamer_online(streamers[index])
+                        self.check_streamer_online(streamer)
 
-                streamers_watching = streamer_selector.select(streamers)
+                selected_streamer_ids = streamer_selector.select(online_streamers, 2)
+                streamers_watching = [find_streamer(streamer_id) for streamer_id in selected_streamer_ids]
 
                 watch_attempts_start_time = time.time()
 
-                for index in streamers_watching:
+                for streamer in streamers_watching:
                     next_iteration = time.time() + CLIENT_WATCH_SECONDS / len(
                         streamers_watching
                     )
 
                     try:
                         response = requests.post(
-                            streamers[index].stream.spade_url,
-                            data=streamers[index].stream.encode_payload(),
+                            streamer.stream.spade_url,  # pyright: ignore [reportArgumentType]
+                            data=streamer.stream.encode_payload(),
                             headers={"User-Agent": self.client_session.user_agent},
                             timeout=CLIENT_WATCH_SECONDS,
                         )
                         logger.debug(
-                            f"Send minute watched request for {streamers[index]} - Status code: {response.status_code}"
+                            f"Send minute watched request for {streamer} - Status code: {response.status_code}"
                         )
                         if response.status_code == 204:
-                            streamers[index].stream.update_minute_watched()
+                            streamer.stream.update_minute_watched()
 
                             """
                             Remember, you can only earn progress towards a time-based Drop on one participating channel at a time.  [ ! ! ! ]
@@ -414,7 +423,7 @@ class Twitch(object):
                             For time-based Drops, if you are unable to claim the Drop in time, you will be able to claim it from the inventory page until the Drops campaign ends.
                             """
 
-                            for campaign in streamers[index].stream.campaigns:
+                            for campaign in streamer.stream.campaigns:
                                 for drop in campaign.drops:
                                     # We could add .has_preconditions_met condition inside is_printable
                                     if (
@@ -422,7 +431,7 @@ class Twitch(object):
                                         and drop.is_printable is True
                                     ):
                                         drop_messages = [
-                                            f"{streamers[index]} is streaming {streamers[index].stream}",
+                                            f"{streamer} is streaming {streamer.stream}",
                                             f"Campaign: {campaign}",
                                             f"Drop: {drop}",
                                             f"{drop.progress_bar()}",

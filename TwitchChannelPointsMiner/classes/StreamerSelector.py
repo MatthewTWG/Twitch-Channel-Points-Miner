@@ -1,127 +1,187 @@
 import abc
+import logging
 import time
+from typing import Callable, Protocol
 
-from TwitchChannelPointsMiner.classes.Settings import Priority
+from TwitchChannelPointsMiner.classes.Settings import Priority, PriorityGroup
 from TwitchChannelPointsMiner.classes.entities.Streamer import Streamer
+from TwitchChannelPointsMiner.utils.LimitedSet import LimitedSet
+
+logger = logging.getLogger(__name__)
 
 
 class StreamerSelector(abc.ABC):
     """Class for selecting streamers from a list."""
 
     @abc.abstractmethod
-    def select(self, streamers: list[Streamer]) -> list[int]:
+    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
         """
         Selects streamers from the list.
         :param streamers: The streamers to consider.
+        :param max_amount: The maximum amount of streamers to select.
         :return: The selected streamers.
         """
         pass
 
 
-class PrioritySelector(StreamerSelector):
-    def __init__(self, priorities: list[Priority]):
-        self.priorities = priorities
+def priority_order(streamers: list[Streamer], max_amount: int) -> list[str]:
+    return [streamer.channel_id for streamer in streamers[:max_amount]]
 
-    def select(self, streamers: list[Streamer]) -> list[int]:
-        """
-        Selects streamers from the list based on the priorities.
-        :param streamers: The streamers to consider.
-        :return: The selected streamers.
-        """
-        streamers_index = [
-            i
-            for i in range(0, len(streamers))
-            if streamers[i].is_online is True
+
+def priority_points(
+    streamers: list[Streamer], max_amount: int, descending: bool
+) -> list[str]:
+    items = [
+        {"points": streamer.channel_points, "id": streamer.channel_id}
+        for streamer in streamers
+    ]
+    items = sorted(
+        items,
+        key=lambda x: x["points"],
+        reverse=descending,
+    )
+    return [item["id"] for item in items][:max_amount]
+
+
+def priority_points_ascending(streamers: list[Streamer], max_amount: int) -> list[str]:
+    return priority_points(streamers, max_amount, False)
+
+
+def priority_points_descending(streamers: list[Streamer], max_amount: int) -> list[str]:
+    return priority_points(streamers, max_amount, True)
+
+
+def priority_streak(streamers: list[Streamer], max_amount: int) -> list[str]:
+    result = []
+    for streamer in streamers:
+        if len(result) >= max_amount:
+            break
+        if (
+            streamer.settings.watch_streak is True
+            and streamer.stream.watch_streak_missing is True
             and (
-                streamers[i].online_at == 0
-                or (time.time() - streamers[i].online_at) > 30
+                streamer.offline_at == 0
+                or ((time.time() - streamer.offline_at) // 60) > 30
             )
-        ]
+            # fix #425
+            and streamer.stream.minute_watched < 7
+        ):
+            result.append(streamer.channel_id)
+    return result
 
-        """
-        Twitch has a limit - you can't watch more than 2 channels at one time.
-        We'll take the first two streamers from the final list as they have the highest priority.
-        """
-        max_watch_amount = 2
-        streamers_watching: set[int] = set()
 
-        def remaining_watch_amount():
-            return max_watch_amount - len(streamers_watching)
+def priority_drops(streamers: list[Streamer], max_amount: int) -> list[str]:
+    # max_amount can be ignored due to 1 drop limit
+    for streamer in streamers:
+        if streamer.any_campaign_has_claimable_drop() is True:
+            return [streamer.channel_id]
+    return []
 
-        def add_to_watching(*streamer_indices: int):
-            """
-            Adds 1 or more streamer indices to the watch set and returns whether the set has more room.
-            :param streamer_indices: The indices to add.
-            :return: True if the set has room, False if it's full.
-            """
-            for streamer_index in streamer_indices:
-                if remaining_watch_amount() > 0:
-                    streamers_watching.add(streamer_index)
-                else:
-                    return False
-            return remaining_watch_amount() > 0
 
+def priority_subscribed(streamers: list[Streamer], max_amount: int) -> list[str]:
+    streamers_with_multiplier = [
+        streamer for streamer in streamers if streamer.viewer_has_points_multiplier()
+    ]
+    streamers_with_multiplier = sorted(
+        streamers_with_multiplier,
+        key=lambda x: x.total_points_multiplier(),
+        reverse=True,
+    )
+    return [streamer.channel_id for streamer in streamers_with_multiplier[:max_amount]]
+
+
+class PriorityFunction(Protocol):
+    def __call__(self, streamers: list[Streamer], max_amount: int) -> list[str]: ...
+
+
+priority_functions: dict[Priority, PriorityFunction] = {
+    Priority.ORDER: priority_order,
+    Priority.POINTS_ASCENDING: priority_points_ascending,
+    Priority.POINTS_DESCENDING: priority_points_descending,
+    Priority.STREAK: priority_streak,
+    Priority.DROPS: priority_drops,
+    Priority.SUBSCRIBED: priority_subscribed,
+}
+
+
+class PrioritySelector(StreamerSelector):
+    """StreamerSelector that considers a given list of Priorities."""
+
+    def __init__(
+        self,
+        priorities: list[Priority],
+        priority_function_overrides: dict[Priority, PriorityFunction] | None = None,
+    ):
+        self.priorities = priorities
+        if priority_function_overrides is not None:
+            self.priority_functions = {
+                priority: priority_function_overrides.get(
+                    priority, priority_functions[priority]
+                )
+                for priority in priority_functions.keys()
+            }
+        else:
+            self.priority_functions = priority_functions
+
+    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+        selected = LimitedSet[str](max_amount)
+        unselected = {streamer.channel_id: streamer for streamer in streamers}
         for priority in self.priorities:
-            if remaining_watch_amount() <= 0:
+            if selected.remaining() <= 0 or len(unselected) <= 0:
                 break
 
-            if priority == Priority.ORDER:
-                # Get the first 2 items, they are already in order
-                if not add_to_watching(*streamers_index):
+            if priority in self.priority_functions:
+                to_add = self.priority_functions[priority](
+                        list(unselected.values()), selected.remaining()
+                    )
+                logger.info(f"Adding {to_add} for {priority}")
+                if not selected.add(*to_add):
                     break
+                else:
+                    for streamer in selected:
+                        unselected.pop(streamer, None)
+            else:
+                logger.warning(f"Unknown priority {priority}")
 
-            elif priority in [Priority.POINTS_ASCENDING, Priority.POINTS_DESCENDING]:
-                items = [
-                    {"points": streamers[index].channel_points, "index": index}
-                    for index in streamers_index
-                ]
-                items = sorted(
-                    items,
-                    key=lambda x: x["points"],
-                    reverse=(True if priority == Priority.POINTS_DESCENDING else False),
-                )
-                if not add_to_watching(*[item["index"] for item in items]):
-                    break
+        return list(selected)[:max_amount]
 
-            elif priority == Priority.STREAK:
-                """
-                Check if we need need to change priority based on watch streak
-                Viewers receive points for returning for x consecutive streams.
-                Each stream must be at least 10 minutes long and it must have been at least 30 minutes since the last stream ended.
-                Watch at least 6m for get the +10
-                """
-                for index in streamers_index:
-                    if (
-                        streamers[index].settings.watch_streak is True
-                        and streamers[index].stream.watch_streak_missing is True
-                        and (
-                            streamers[index].offline_at == 0
-                            or ((time.time() - streamers[index].offline_at) // 60) > 30
-                        )
-                        # fix #425
-                        and streamers[index].stream.minute_watched < 7
-                    ):
-                        if not add_to_watching(index):
-                            break
 
-            elif priority == Priority.DROPS:
-                for index in streamers_index:
-                    if streamers[index].any_campaign_has_claimable_drop() is True:
-                        if not add_to_watching(index):
-                            break
+class PriorityGroupSelector(StreamerSelector):
+    """Selects streamers based on the given PriorityGroup."""
 
-            elif priority == Priority.SUBSCRIBED:
-                streamers_with_multiplier = [
-                    index
-                    for index in streamers_index
-                    if streamers[index].viewer_has_points_multiplier()
-                ]
-                streamers_with_multiplier = sorted(
-                    streamers_with_multiplier,
-                    key=lambda x: streamers[x].total_points_multiplier(),
-                    reverse=True,
-                )
-                if not add_to_watching(*streamers_with_multiplier):
-                    break
+    def __init__(self, streamers: list[str] | None, selector: PrioritySelector) -> None:
+        self.streamers = streamers
+        self.selector = selector
 
-        return list(streamers_watching)[:max_watch_amount]
+    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+        streamers_by_ids = {streamer.channel_id: streamer for streamer in streamers}
+        if self.streamers is None or len(self.streamers) == 0:
+            sub_streamers = streamers
+        else:
+            group_streamers = self.streamers
+            sub_streamers = [
+                streamers_by_ids[streamer_id]
+                for streamer_id in group_streamers
+                if streamer_id in streamers_by_ids
+            ]
+        selection = self.selector.select(sub_streamers, max_amount)
+        return selection[:max_amount]
+
+
+class NestedSelector(StreamerSelector):
+    """Selects streamers using the given selectors in order."""
+
+    def __init__(self, selectors: list[StreamerSelector]) -> None:
+        self.selectors = selectors
+
+    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+        selected = LimitedSet(max_amount)
+        unselected = {streamer.channel_id: streamer for streamer in streamers}
+        for selector in self.selectors:
+            selection = selector.select(list(unselected.values()), selected.remaining())
+            if not selected.add(*selection):
+                break
+            else:
+                for streamer in selected:
+                    unselected.pop(streamer, None)
+        return list(selected)[:max_amount]
