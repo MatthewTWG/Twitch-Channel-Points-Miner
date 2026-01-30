@@ -44,7 +44,7 @@ class Drop(object):
 
         self.end_at = data.end_at
         self.start_at = data.start_at
-        self.dt_match = self.start_at < datetime.now() < self.end_at
+        self.dt_match = self.start_at.timestamp() < datetime.now().timestamp() < self.end_at.timestamp()
 
     def update(self, progress: TimeBasedDropInProgress.SelfEdge):
         self.has_preconditions_met = progress.has_preconditions_met

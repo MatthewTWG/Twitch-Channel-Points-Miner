@@ -1,6 +1,7 @@
 import datetime
-import re
 from typing import Callable, Any, ContextManager
+
+import dateutil.parser
 
 from TwitchChannelPointsMiner.classes.gql.Errors import (
     InvalidJsonShapeException,
@@ -141,24 +142,10 @@ def expect_iso_8601(value: Any) -> datetime.datetime:
     """
     value = expect_str(value)
 
-    # Twitch sends timestamps with nano precision instead of micro
-    if re.match(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{1,9}Z", value):
-        # drop the last 3 digits
-        dot_index = value.rindex(".")
-        value_start = value[:dot_index]
-        nano_seconds = value[dot_index + 1 : -1]
-        nano_seconds = nano_seconds[:-3]
-        value = (
-            f"{value_start}.{nano_seconds}Z"
-            if len(nano_seconds) > 0
-            else f"{value_start}Z"
-        )
-
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ"):
-        try:
-            return datetime.datetime.strptime(value, fmt)
-        except ValueError:
-            continue
+    try:
+        return dateutil.parser.parse(value)
+    except ValueError:
+        pass
     raise InvalidJsonShapeException([], f"time data '{value}' does not match format")
 
 
