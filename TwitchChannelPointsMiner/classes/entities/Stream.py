@@ -70,7 +70,7 @@ class Stream(object):
         created_at: datetime,
         watch_streak_milestone: WatchStreakMilestone | None,
     ):
-        if self.broadcast_id is not broadcast_id:
+        if self.broadcast_id != broadcast_id:
             # Different stream, reset watch time
             self.init_watch_streak()
 
@@ -100,7 +100,7 @@ class Stream(object):
         logger.debug(f"Update: {self}")
 
     def __repr__(self):
-        return f"Stream(title={self.title}, game={self.__str_game()}, tags={self.__str_tags()})"
+        return f"Stream(title={self.title}, game={self.__str_game()}, tags={self.__str_tags()}, id={self.broadcast_id}, created_at={self.created_at}, watch_streak_missing={self.watch_streak_missing}, minute_watched={self.minute_watched})"
 
     def __str__(self):
         return f"{self.title}" if Settings.logger.less else self.__repr__()
