@@ -389,7 +389,7 @@ priority_streak_data = [
             )
         ],
         2,
-        [],
+        ["a"],
     ],
     [
         [
@@ -402,7 +402,7 @@ priority_streak_data = [
             )
         ],
         2,
-        [],
+        ["a"],
     ],
     # Multiple streamers in varying configurations
     #   4 streamers: 10 minutes watched, settings.watch_streak False, offline_at 30 mins ago, should succeed
@@ -438,7 +438,7 @@ priority_streak_data = [
             ),
         ],
         2,
-        ["d"],
+        ["a", "d"],
     ],
     #   4 streamers: all valid
     [

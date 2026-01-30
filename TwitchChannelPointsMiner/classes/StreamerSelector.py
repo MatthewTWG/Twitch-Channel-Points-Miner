@@ -1,9 +1,9 @@
 import abc
 import logging
 import time
-from typing import Callable, Protocol
+from typing import Protocol
 
-from TwitchChannelPointsMiner.classes.Settings import Priority, PriorityGroup
+from TwitchChannelPointsMiner.classes.Settings import Priority
 from TwitchChannelPointsMiner.classes.entities.Streamer import Streamer
 from TwitchChannelPointsMiner.utils.LimitedSet import LimitedSet
 
@@ -63,8 +63,6 @@ def priority_streak(streamers: list[Streamer], max_amount: int) -> list[str]:
                 streamer.offline_at == 0
                 or ((time.time() - streamer.offline_at) // 60) > 30
             )
-            # fix #425
-            and streamer.stream.minute_watched < 7
         ):
             result.append(streamer.channel_id)
     return result
@@ -134,7 +132,6 @@ class PrioritySelector(StreamerSelector):
                 to_add = self.priority_functions[priority](
                         list(unselected.values()), selected.remaining()
                     )
-                logger.info(f"Adding {to_add} for {priority}")
                 if not selected.add(*to_add):
                     break
                 else:
