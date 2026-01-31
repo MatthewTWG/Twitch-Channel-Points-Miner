@@ -1,3 +1,4 @@
+import datetime
 import time
 from unittest.mock import MagicMock
 
@@ -15,6 +16,7 @@ from TwitchChannelPointsMiner.classes.StreamerSelector import (
     priority_subscribed,
     NestedSelector,
     StreamerSelector,
+    priority_streak_by_earliest_stream_created_at,
 )
 from TwitchChannelPointsMiner.classes.entities.Stream import Stream
 from TwitchChannelPointsMiner.classes.entities.Streamer import (
@@ -884,3 +886,112 @@ class TestNestedSelector:
 
         # Normalise to handle set ordering
         assert set(streamer_ids) == set(expected_ids)
+
+
+def streamer_with_created_at(username: str, _id: str, timestamp: int):
+    streamer = Streamer(username, _id, settings=StreamerSettings(watch_streak=True))
+    streamer.stream.created_at = datetime.datetime.fromtimestamp(timestamp)
+    return streamer
+
+
+priority_streak_by_earliest_stream_created_at_data = [
+    [[], 0, []],
+    [[], 1, []],
+    [[], 2, []],
+    [[], 0, []],
+    [[streamer_with_created_at("1", "a", 0)], 1, ["a"]],
+    [[streamer_with_created_at("1", "a", 0)], 2, ["a"]],
+    [[streamer_with_created_at("1", "a", 0), Streamer("2", "b")], 0, []],
+    [
+        [streamer_with_created_at("1", "a", 0), streamer_with_created_at("2", "b", 0)],
+        1,
+        ["a"],
+    ],
+    [
+        [streamer_with_created_at("1", "a", 1), streamer_with_created_at("2", "b", 0)],
+        1,
+        ["b"],
+    ],
+    [
+        [streamer_with_created_at("1", "a", 0), streamer_with_created_at("2", "b", 1)],
+        1,
+        ["a"],
+    ],
+    [
+        [streamer_with_created_at("1", "a", 0), streamer_with_created_at("2", "b", 0)],
+        2,
+        ["a", "b"],
+    ],
+    [
+        [streamer_with_created_at("1", "a", 1), streamer_with_created_at("2", "b", 0)],
+        2,
+        ["b", "a"],
+    ],
+    [
+        [streamer_with_created_at("1", "a", 0), streamer_with_created_at("2", "b", 1)],
+        2,
+        ["a", "b"],
+    ],
+    [
+        [streamer_with_created_at("1", "a", 1), streamer_with_created_at("2", "b", 1)],
+        2,
+        ["a", "b"],
+    ],
+    [
+        [
+            streamer_with_created_at("1", "a", 0),
+            streamer_with_created_at("2", "b", 0),
+            streamer_with_created_at("3", "c", 0),
+        ],
+        2,
+        ["a", "b"],
+    ],
+    [
+        [
+            streamer_with_created_at("1", "a", 0),
+            streamer_with_created_at("2", "b", 1),
+            streamer_with_created_at("3", "c", 2),
+        ],
+        2,
+        ["a", "b"],
+    ],
+    [
+        [
+            streamer_with_created_at("1", "a", 2),
+            streamer_with_created_at("2", "b", 1),
+            streamer_with_created_at("3", "c", 0),
+        ],
+        2,
+        ["c", "b"],
+    ],
+    [
+        [
+            streamer_with_created_at("1", "a", 1),
+            streamer_with_created_at("2", "b", 0),
+            streamer_with_created_at("3", "c", 2),
+        ],
+        2,
+        ["b", "a"],
+    ],
+    [
+        [
+            streamer_with_created_at("1", "a", 1),
+            streamer_with_created_at("2", "b", 2),
+            streamer_with_created_at("3", "c", 0),
+        ],
+        2,
+        ["c", "a"],
+    ],
+]
+
+
+@pytest.mark.parametrize(
+    "streamers,max_amount,expected_ids", priority_streak_by_earliest_stream_created_at_data
+)
+def test_priority_streak_by_earliest_stream_created_at(
+    streamers: list[Streamer], max_amount: int, expected_ids: list[str]
+):
+    streamer_ids = priority_streak_by_earliest_stream_created_at(streamers, max_amount)
+
+    # Normalise to handle set ordering
+    assert set(streamer_ids) == set(expected_ids)

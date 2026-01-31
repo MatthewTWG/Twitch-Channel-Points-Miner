@@ -130,8 +130,8 @@ class PrioritySelector(StreamerSelector):
 
             if priority in self.priority_functions:
                 to_add = self.priority_functions[priority](
-                        list(unselected.values()), selected.remaining()
-                    )
+                    list(unselected.values()), selected.remaining()
+                )
                 if not selected.add(*to_add):
                     break
                 else:
@@ -182,3 +182,27 @@ class NestedSelector(StreamerSelector):
                 for streamer in selected:
                     unselected.pop(streamer, None)
         return list(selected)[:max_amount]
+
+
+# Custom priority functions
+
+
+def priority_streak_by_earliest_stream_created_at(
+    streamers: list[Streamer], max_amount: int
+) -> list[str]:
+    """
+    Prioritises only streamers that have streaks, ordered by ascending stream.created_at to prioritise streams that came
+    online first.
+    :param streamers: The streamers to consider.
+    :param max_amount: The maximum amount of streamers to select.
+    :return: The selected streamer ids.
+    """
+    streamers.sort(
+        key=lambda streamer: (
+            streamer.stream.created_at.timestamp()
+            if streamer.stream.created_at is not None
+            else 0
+        ),
+        reverse=False,
+    )
+    return priority_streak(streamers, max_amount)

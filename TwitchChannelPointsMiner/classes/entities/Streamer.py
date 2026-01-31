@@ -97,6 +97,7 @@ class Streamer(object):
         channel_id: str | None = None,
         channel_points: int | None = None,
         stream: Stream | None = None,
+        online_at: float | None = None,
         offline_at: float | None = None,
         active_multipliers: list[Properties.Multiplier] | None = None,
         settings: StreamerSettings | None = None,
@@ -106,7 +107,7 @@ class Streamer(object):
         self.settings = settings
         self.is_online = False
         self.stream_up = 0
-        self.online_at = 0
+        self.online_at = online_at if online_at is not None else 0.0
         self.offline_at = offline_at if offline_at is not None else 0.0
         self.channel_points = channel_points if channel_points is not None else 0
         self.community_goals = {}
