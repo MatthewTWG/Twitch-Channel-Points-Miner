@@ -10,7 +10,9 @@ from TwitchChannelPointsMiner.classes.gql import Tag
 from TwitchChannelPointsMiner.classes.gql.data.response.BroadcastSettings import (
     GameBroadcastSettings,
 )
-from TwitchChannelPointsMiner.classes.gql.data.response.RewardList import WatchStreakMilestone
+from TwitchChannelPointsMiner.classes.gql.data.response.RewardList import (
+    WatchStreakMilestone,
+)
 from TwitchChannelPointsMiner.constants import DROP_ID
 
 logger = logging.getLogger(__name__)
@@ -30,9 +32,10 @@ class Stream(object):
         "payload",
         "watch_streak_missing",
         "minute_watched",
+        "watch_count",
         "__last_update",
         "__minute_watched_timestamp",
-        "created_at"
+        "created_at",
     ]
 
     def __init__(self):
@@ -88,7 +91,10 @@ class Stream(object):
             last_streak_achievement_timestamp = (
                 watch_streak_milestone.viewer_milestone.achievement_timestamp
             )
-            if last_streak_achievement_timestamp is not None and last_streak_achievement_timestamp > created_at:
+            if (
+                last_streak_achievement_timestamp is not None
+                and last_streak_achievement_timestamp > created_at
+            ):
                 # We've got a streak going + it was last achieved during this stream
                 self.watch_streak_missing = False
 
@@ -130,6 +136,7 @@ class Stream(object):
     def init_watch_streak(self):
         self.watch_streak_missing = True
         self.minute_watched = 0
+        self.watch_count = 0
         self.__minute_watched_timestamp = 0
 
     def update_minute_watched(self):

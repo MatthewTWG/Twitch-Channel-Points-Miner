@@ -180,8 +180,13 @@ class Streamer(object):
         self.history[reason_code]["counter"] += counter
         self.history[reason_code]["amount"] += earned
 
-        if self.stream.watch_streak_missing and reason_code in {"WATCH_STREAK", "WATCH"}:
-            # Getting a WATCH is enough to start/continue a streak
+        if reason_code == "WATCH":
+            self.stream.watch_count += 1
+
+        if self.stream.watch_streak_missing and (
+            reason_code == "WATCH_STREAK" or self.stream.watch_count >= 2
+        ):
+            # Getting 2 WATCH or 1 WATCH_STREAK is enough to start/continue a streak
             self.stream.watch_streak_missing = False
 
     def stream_up_elapsed(self):
@@ -198,7 +203,11 @@ class Streamer(object):
         return (
             self.settings.claim_drops is True
             and self.is_online is True
-            and any(campaign for campaign in self.stream.campaigns if campaign.any_drop_claimable())
+            and any(
+                campaign
+                for campaign in self.stream.campaigns
+                if campaign.any_drop_claimable()
+            )
         )
 
     def viewer_has_points_multiplier(self):
