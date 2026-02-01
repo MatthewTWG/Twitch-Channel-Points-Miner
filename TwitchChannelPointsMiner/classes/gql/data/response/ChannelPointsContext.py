@@ -51,11 +51,14 @@ class CommunityGoal:
 
 
 class CommunityPointsSettings:
-    def __init__(self, goals: list[CommunityGoal]):
+    def __init__(self, is_enabled: bool, goals: list[CommunityGoal]):
+        self.is_enabled = is_enabled
+        """True if channel points are enabled for this channel."""
         self.goals = goals
+        """The current community goals for this channel."""
 
     def __repr__(self):
-        return f"CommunityPointsSettings({self.goals})"
+        return f"CommunityPointsSettings({self.__dict__})"
 
 
 class Channel:

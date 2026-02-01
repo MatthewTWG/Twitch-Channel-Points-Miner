@@ -27,6 +27,9 @@ from TwitchChannelPointsMiner.classes.gql.data.response.ChannelPointsContext imp
     ChannelPointsContextResponse,
     ContributeToCommunityGoalResponse,
 )
+from TwitchChannelPointsMiner.classes.gql.data.response.ChatRoomBanStatus import (
+    ChatRoomBanStatusResponse,
+)
 from TwitchChannelPointsMiner.classes.gql.data.response.Drops import (
     DropsHighlightServiceAvailableDropsResponse,
     InventoryResponse,
@@ -92,6 +95,13 @@ def expect_is_type[T](value: Any, _type: type[T]) -> T:
         raise InvalidJsonShapeException(
             [], f"{_type.__name__} expected, got {describe_value(value)}"
         )
+    return value
+
+
+def expect_any(value: Any) -> Any:
+    """
+    Parser that just returns the given value.
+    """
     return value
 
 
@@ -457,6 +467,7 @@ def community_points_settings_parser(
 ) -> ChannelPointsContext.CommunityPointsSettings:
     expect_dict(value)
     return ChannelPointsContext.CommunityPointsSettings(
+        is_enabled=parse_expected_value(value, "isEnabled", expect_bool),
         goals=parse_expected_value(value, "goals", list_parser(community_goal_parser))
     )
 
@@ -1023,4 +1034,19 @@ class Parser:
                 channel=parse_expected_value(
                     data, "channel", reward_list_channel_parser
                 ),
+            )
+
+    def parse_chat_room_ban_status(self, response: Any) -> ChatRoomBanStatusResponse:
+        """
+        Parses responses to ChatRoomBanStatus requests.
+        :param response: The response to parse.
+        :return: The parsed response.
+        :raises GQLError: If the response contains errors or there is an issue parsing the response.
+        """
+        _, _, data = self.parse_base_response(response, True)
+        with JsonParentContext("data"):
+            return ChatRoomBanStatusResponse(
+                status=parse_expected_value(
+                    data, "chatRoomBanStatus", optional_parser(expect_any)
+                )
             )

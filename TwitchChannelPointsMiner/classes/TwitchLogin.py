@@ -329,7 +329,7 @@ class TwitchLogin(object):
         else:
             raise WrongCookiesException("There must be a cookies file!")
 
-    def get_user_id(self):
+    def get_user_id(self) -> int:
         persistent = self.get_cookie_value("persistent")
         user_id = (
             int(persistent.split("%")[

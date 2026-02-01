@@ -109,8 +109,8 @@ class Twitch(object):
     # === STREAMER / STREAM / INFO === #
     def update_stream(self, streamer: Streamer):
         if streamer.stream.update_required() is True:
-            stream_info, is_live_info, watch_streak_milestone = self.get_stream_info(
-                streamer
+            stream_info, is_live_info, watch_streak_milestone, ban_status = (
+                self.get_stream_info(streamer)
             )
             if (
                 stream_info is not None
@@ -118,6 +118,7 @@ class Twitch(object):
                 and is_live_info is not None
                 and is_live_info.stream is not None
             ):
+                streamer.chat_banned = ban_status is not None
                 streamer.stream.update(
                     broadcast_id=stream_info.stream.id,
                     title=stream_info.broadcast_settings.title,
@@ -188,6 +189,9 @@ class Twitch(object):
             )
             is_live_response = self.gql.with_is_stream_live_query(streamer.channel_id)
             reward_list_response = self.gql.reward_list(streamer.channel_id)
+            chat_room_ban_status = self.gql.chat_room_ban_status(
+                self.client_session.login.get_user_id(), streamer.channel_id
+            )
         except RetryError as e:
             logger.error(f"Error getting stream info for {streamer.username}: {e}")
             raise e
@@ -199,6 +203,7 @@ class Twitch(object):
                 info_response.user,
                 is_live_response.user,
                 reward_list_response.channel.self.watch_streak_milestone,
+                chat_room_ban_status.status
             )
 
     def check_streamer_online(self, streamer):
@@ -380,12 +385,15 @@ class Twitch(object):
         while self.running:
             try:
                 online_streamers = [
-                    streamer for streamer in streamers
+                    streamer
+                    for streamer in streamers
                     if streamer.is_online is True
-                       and (
+                    and (
                         streamer.online_at == 0
                         or (time.time() - streamer.online_at) > 30
                     )
+                    and streamer.channel_points_enabled
+                    and not streamer.chat_banned
                 ]
 
                 for streamer in online_streamers:
@@ -487,6 +495,7 @@ class Twitch(object):
             raise StreamerDoesNotExistException
         channel = response.community.channel
         community_points = channel.edge.community_points
+        streamer.channel_points_enabled = channel.community_points_settings.is_enabled
         streamer.channel_points = community_points.balance
         streamer.active_multipliers = community_points.active_multipliers
 

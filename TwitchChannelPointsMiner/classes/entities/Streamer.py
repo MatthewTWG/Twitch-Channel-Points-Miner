@@ -78,6 +78,8 @@ class Streamer(object):
         "stream_up",
         "online_at",
         "offline_at",
+        "channel_points_enabled",
+        "chat_banned",
         "channel_points",
         "community_goals",
         "minute_watched_requests",
@@ -96,6 +98,8 @@ class Streamer(object):
         username: str,
         channel_id: str | None = None,
         channel_points: int | None = None,
+        channel_points_enabled: bool = True,
+        chat_banned: bool = False,
         stream: Stream | None = None,
         online_at: float | None = None,
         offline_at: float | None = None,
@@ -109,6 +113,8 @@ class Streamer(object):
         self.stream_up = 0
         self.online_at = online_at if online_at is not None else 0.0
         self.offline_at = offline_at if offline_at is not None else 0.0
+        self.channel_points_enabled = channel_points_enabled
+        self.chat_banned = chat_banned
         self.channel_points = channel_points if channel_points is not None else 0
         self.community_goals = {}
         self.minute_watched_requests = None

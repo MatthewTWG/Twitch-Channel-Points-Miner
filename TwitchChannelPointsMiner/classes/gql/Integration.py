@@ -20,6 +20,9 @@ from TwitchChannelPointsMiner.classes.gql.data.response.ChannelPointsContext imp
     UserPointsContributionResponse,
     ContributeToCommunityGoalResponse,
 )
+from TwitchChannelPointsMiner.classes.gql.data.response.ChatRoomBanStatus import (
+    ChatRoomBanStatusResponse,
+)
 from TwitchChannelPointsMiner.classes.gql.data.response.Drops import (
     DropsHighlightServiceAvailableDropsResponse,
     InventoryResponse,
@@ -622,6 +625,23 @@ class GQL:
             GQLOperations.RewardList["operationName"],
             json_data,
             self.parser.parse_reward_list,
+        )
+
+    def chat_room_ban_status(
+        self, user_id: int, channel_id: str
+    ) -> ChatRoomBanStatusResponse:
+        """
+        Gets the user's chat room ban status for the given channel.
+        :param user_id: The id of the user.
+        :param channel_id: The id of the channel.
+        :return: The response.
+        """
+        json_data = copy.deepcopy(GQLOperations.ChatRoomBanStatus)
+        json_data["variables"] = {"targetUserID": f"{user_id}", "channelID": channel_id}
+        return self.post_gql_request_single(
+            GQLOperations.ChatRoomBanStatus["operationName"],
+            json_data,
+            self.parser.parse_chat_room_ban_status,
         )
 
 
