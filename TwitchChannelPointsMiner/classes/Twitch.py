@@ -91,6 +91,7 @@ class Twitch(object):
             version=CLIENT_VERSION,
             device_id=device_id,
             session_id=client_session_id,
+            version_outdated=True,
         )
         gql_factory = gql_factory if gql_factory is not None else GQLFactory()
         self.gql = gql_factory.create(self.client_session)
@@ -350,6 +351,8 @@ class Twitch(object):
 
     def update_client_version(self) -> str:
         try:
+            # Set the version as up to date to avoid spamming requests
+            self.client_session.version_outdated = False
             response = requests.get(URL)
             if response.status_code != 200:
                 logger.debug(
@@ -563,6 +566,19 @@ class Twitch(object):
                     if not future.done():
                         failed_streamers.add(streamer.username)
         return failed_streamers
+
+    def refresh_streamer_contexts(self, streamers: list[Streamer]):
+        """
+        Refreshes the channel points contexts for the given Streamers.
+        :param streamers: The streamers to refresh.
+        """
+        for streamer in streamers:
+            if streamer.is_online:
+                try:
+                    self.load_channel_points_context(streamer)
+                except StreamerDoesNotExistException:
+                    logger.warning(f"Detected that Streamer '{streamer.username}' no longer exists.")
+                    pass
 
     def make_predictions(self, event):
         decision = event.bet.calculate(event.streamer.channel_points)

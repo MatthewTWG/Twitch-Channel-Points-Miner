@@ -19,10 +19,12 @@ class ClientSession:
         version: str | None = None,
         device_id: str | None = None,
         session_id: str | None = None,
+        version_outdated: bool = False,
     ):
         self.login = login
         self.user_agent = user_agent
         self.version: str = version if version is not None else CLIENT_VERSION
+        self.version_outdated = version_outdated
         self.device_id = (
             device_id
             if device_id

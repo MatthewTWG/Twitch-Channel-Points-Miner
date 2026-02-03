@@ -9,28 +9,28 @@ import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import TwitchChannelPointsMiner.classes.websocket.hermes.data as hermes_data
 from TwitchChannelPointsMiner.classes.Chat import ChatPresence, ThreadChat
+from TwitchChannelPointsMiner.classes.Exceptions import StreamerDoesNotExistException
 from TwitchChannelPointsMiner.classes.PubSub import PubSubHandler
+from TwitchChannelPointsMiner.classes.Settings import FollowersOrder, Priority, Settings
 from TwitchChannelPointsMiner.classes.StreamerSelector import (
     StreamerSelector,
     PrioritySelector,
 )
+from TwitchChannelPointsMiner.classes.Twitch import Twitch
 from TwitchChannelPointsMiner.classes.entities.EventPrediction import EventPrediction
 from TwitchChannelPointsMiner.classes.entities.PubsubTopic import PubsubTopic
 from TwitchChannelPointsMiner.classes.entities.Streamer import (
     Streamer,
     StreamerSettings,
 )
-from TwitchChannelPointsMiner.classes.Exceptions import StreamerDoesNotExistException
-from TwitchChannelPointsMiner.classes.Settings import FollowersOrder, Priority, Settings
-from TwitchChannelPointsMiner.classes.Twitch import Twitch
+from TwitchChannelPointsMiner.classes.gql.Integration import GQLFactory, GQL
 from TwitchChannelPointsMiner.classes.websocket import HermesWebSocketPool, PubSubWebSocketPool
 from TwitchChannelPointsMiner.constants import HERMES_WEBSOCKET, CLIENT_ID_WEB
-from TwitchChannelPointsMiner.classes.gql.Integration import GQLFactory, GQL
 from TwitchChannelPointsMiner.logger import LoggerSettings, configure_loggers
 from TwitchChannelPointsMiner.utils import (
     millify,
@@ -42,6 +42,7 @@ from TwitchChannelPointsMiner.utils import (
     AttemptStrategy,
     interruptible_sleep,
 )
+from TwitchChannelPointsMiner.utils.Utils import interruptible_repeating_task
 
 # Suppress:
 #   - chardet.charsetprober - [feed]
@@ -72,8 +73,7 @@ class TwitchChannelPointsMiner:
         "streamer_selector",
         "streamers",
         "events_predictions",
-        "minute_watcher_thread",
-        "sync_campaigns_thread",
+        "background_tasks",
         "ws_pool",
         "session_id",
         "running",
@@ -177,8 +177,7 @@ class TwitchChannelPointsMiner:
 
         self.streamers: list[Streamer] = []
         self.events_predictions: dict[str, EventPrediction] = {}
-        self.minute_watcher_thread = None
-        self.sync_campaigns_thread = None
+        self.background_tasks: list[threading.Thread] = []
         self.ws_pool = None
 
         self.session_id = str(uuid.uuid4())
@@ -207,7 +206,7 @@ class TwitchChannelPointsMiner:
             logger.info(f"The latest version on GitHub is {github_version}")
 
         for sign in [signal.SIGINT, signal.SIGSEGV, signal.SIGTERM]:
-            signal.signal(sign, self.end)
+            signal.signal(sign, self.end_signal)
 
     def analytics(
         self,
@@ -370,7 +369,7 @@ class TwitchChannelPointsMiner:
                 ]
                 if not self.streamers:
                     logger.error("No valid streamers available after initialization.")
-                    self.end(0, 0)
+                    self.end()
                     return
 
             self.original_streamers = [
@@ -382,25 +381,44 @@ class TwitchChannelPointsMiner:
                 self.streamers, "make_predictions", True
             )
 
+            background_task_sleep_step = timedelta(seconds=5).total_seconds()
+
             # If we have at least one streamer with settings = claim_drops True
             # Spawn a thread for sync inventory and dashboard
             if (
                 at_least_one_value_in_settings_is(self.streamers, "claim_drops", True)
                 is True
             ):
-                self.sync_campaigns_thread = threading.Thread(
+                sync_campaigns_thread = threading.Thread(
                     target=self.twitch.sync_campaigns,
                     args=(self.streamers,),
                 )
-                self.sync_campaigns_thread.name = "Sync campaigns/inventory"
-                self.sync_campaigns_thread.start()
+                sync_campaigns_thread.name = "Sync campaigns/inventory"
+                sync_campaigns_thread.start()
+                self.background_tasks.append(sync_campaigns_thread)
 
-            self.minute_watcher_thread = threading.Thread(
+            minute_watcher_thread = threading.Thread(
                 target=self.twitch.send_minute_watched_events,
                 args=(self.streamers, self.streamer_selector),
             )
-            self.minute_watcher_thread.name = "Minute watcher"
-            self.minute_watcher_thread.start()
+            minute_watcher_thread.name = "Minute watcher"
+            minute_watcher_thread.start()
+            self.background_tasks.append(minute_watcher_thread)
+
+            # Periodic task to update the client version
+            update_client_version_period = timedelta(hours=10).total_seconds()
+            update_client_version_thread = threading.Thread(
+                target=lambda: interruptible_repeating_task(
+                    self.twitch.update_client_version,
+                    lambda: self.running,
+                    lambda: self.twitch.client_session.version_outdated,
+                    update_client_version_period,
+                    background_task_sleep_step,
+                ),
+            )
+            update_client_version_thread.name = "Update client version"
+            update_client_version_thread.start()
+            self.background_tasks.append(update_client_version_thread)
 
             pubsub_handlers = [PubSubHandler(self.twitch, self.streamers, self.events_predictions)]
             if Settings.use_hermes:
@@ -423,7 +441,7 @@ class TwitchChannelPointsMiner:
             # Fixes 'ERR_BADAUTH'
             if not user_id:
                 logger.error("No user_id, exiting...")
-                self.end(0, 0)
+                self.end()
 
             self.ws_pool.submit(
                 PubsubTopic(
@@ -464,25 +482,72 @@ class TwitchChannelPointsMiner:
                         PubsubTopic("community-points-channel-v1", streamer=streamer)
                     )
 
-            refresh_context = time.time()
-            while self.running:
-                interruptible_sleep(lambda: self.running, random.uniform(20, 60))
-                self.ws_pool.check_stale_connections()
-                if ((time.time() - refresh_context) // 60) >= 30:
-                    refresh_context = time.time()
-                    for index in range(0, len(self.streamers)):
-                        if self.streamers[index].is_online:
-                            self.twitch.load_channel_points_context(
-                                self.streamers[index]
-                            )
-        finally:
-            self.running = False
+            # Periodic task to check the websockets for stale connections
+            websocket_jitter_min = timedelta(seconds=20).total_seconds()
+            websocket_jitter_max = timedelta(seconds=60).total_seconds()
 
-    def end(self, signum, frame):
+            def websocket_task():
+                while (
+                    self.running
+                    and self.ws_pool is not None
+                    and interruptible_sleep(
+                        lambda: self.running,
+                        random.uniform(websocket_jitter_min, websocket_jitter_max),
+                        background_task_sleep_step,
+                    )
+                ):
+                    try:
+                        self.ws_pool.check_stale_connections()
+                    except Exception as e:
+                        # Report the error but allow the task to continue
+                        logger.error(f"Error when checking stale websocket connections: {e}")
+
+            ws_thread = threading.Thread(target=websocket_task)
+            ws_thread.name = "WebSocket check stale connections"
+            ws_thread.start()
+            self.background_tasks.append(ws_thread)
+
+            # Periodic task to refresh all channel points contexts
+            context_refresh_period = timedelta(minutes=30).total_seconds()
+            context_refresh_thread = threading.Thread(
+                target=lambda: interruptible_repeating_task(
+                    lambda: self.twitch.refresh_streamer_contexts(self.streamers),
+                    lambda: self.running,
+                    lambda: False,
+                    context_refresh_period,
+                    background_task_sleep_step,
+                ),
+            )
+            context_refresh_thread.name = "Refresh channel points contexts"
+            context_refresh_thread.start()
+            self.background_tasks.append(context_refresh_thread)
+
+            # Main loop, sleeps and checks on background tasks/running state
+            main_loop_period = timedelta(seconds=30).total_seconds()
+
+            def not_is_alive(thread: threading.Thread):
+                return not thread.is_alive()
+
+            while self.running:
+                interruptible_sleep(lambda: self.running, main_loop_period, 5)
+                if any(map(not_is_alive, self.background_tasks)):
+                    logger.error(
+                        f"Background task(s) {list(map(lambda task: task.name, filter(not_is_alive, self.background_tasks)))} have stopped working. Stopping application."
+                    )
+                    break
+        finally:
+            self.end()
+
+    def end_signal(self, signum, frame):
         if not self.running:
             return
 
         logger.info("CTRL+C Detected! Please wait just a moment!")
+        self.end()
+
+    def end(self):
+        if not self.running:
+            return
 
         for streamer in self.streamers:
             if streamer.irc_chat is not None and streamer.settings.chat != ChatPresence.NEVER:
@@ -494,11 +559,8 @@ class TwitchChannelPointsMiner:
         if self.ws_pool is not None:
             self.ws_pool.end()
 
-        if self.minute_watcher_thread is not None:
-            self.minute_watcher_thread.join()
-
-        if self.sync_campaigns_thread is not None:
-            self.sync_campaigns_thread.join()
+        for task in self.background_tasks:
+            task.join()
 
         # Check if all the mutex are unlocked.
         # Prevent breaks of .json file

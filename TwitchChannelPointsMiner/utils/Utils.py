@@ -1,10 +1,10 @@
-import platform
+import abc
 import re
 import secrets
 import socket
 import time
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from os import path
 from random import randrange
 from typing import TypeVar, Iterable, Callable
@@ -276,13 +276,47 @@ def format_timestamp(timestamp: datetime) -> str:
     return f"{timestamp:%Y-%m-%dT%H:%M:%S}.{timestamp.microsecond // 1000:03d}Z"
 
 
-def interruptible_sleep(running_flag: Callable[[], bool], duration: float, step=1.0):
+def interruptible_sleep(running_flag: Callable[[], bool], duration: float, step=1.0) -> bool:
     """
     Sleeps for the given amount of time or until `running_flag` returns False.
     :param running_flag: A function that returns True while we should continue sleeping.
     :param duration: The maximum duration of the sleep.
     :param step: The amount of time in between checks to see if we should stop sleeping.
+    :return: True if the sleep was uninterrupted, False otherwise.
     """
     target = time.time() + duration
-    while running_flag() and time.time() < target:
+    while (last_flag:=running_flag()) and time.time() < target:
         time.sleep(max(0.0, min(step, target - time.time())))
+    return last_flag
+
+
+def interruptible_repeating_task(
+    task: Callable,
+    running_flag: Callable[[], bool],
+    run_early_flag: Callable[[], bool],
+    period_seconds: float,
+    step: float = 1.0,
+):
+    """
+    Repeatably calls the given task every `period_seconds` seconds. Halts once the `running_flag` returns False. Checks
+    every `step` seconds if `running_flag` returns True to allow halting faster. Can also exit sleeping quicker if
+    `run_early_flag` returns True.
+    :param task: The task to repeat.
+    :param running_flag: A function that returns True while we should continue running the task.
+    :param run_early_flag: A function that returns True if we should skip sleeping and run the task early.
+    :param period_seconds: The number of seconds to wait between repeating tasks.
+    :param step: The number of seconds in between checks while sleeping to see if we should stop sleeping early.
+    """
+    next_sleep_duration = period_seconds
+    last_run_flag = True
+    while last_run_flag:
+        interruptible_sleep(
+            lambda: running_flag() and not run_early_flag(), next_sleep_duration, step
+        )
+        # Check if running_flag or run_early_flag exited the loop
+        if running_flag():
+            next_run_time = time.time() + period_seconds
+            task()
+            next_sleep_duration = max(0.0, next_run_time - time.time())
+        else:
+            break
