@@ -120,6 +120,7 @@ class Twitch(object):
                 and is_live_info.stream is not None
             ):
                 streamer.chat_banned = ban_status is not None
+                streak_was_missing = streamer.stream.watch_streak_missing
                 streamer.stream.update(
                     broadcast_id=stream_info.stream.id,
                     title=stream_info.broadcast_settings.title,
@@ -129,6 +130,14 @@ class Twitch(object):
                     created_at=is_live_info.stream.created_at,
                     watch_streak_milestone=watch_streak_milestone,
                 )
+                if streak_was_missing and not streamer.stream.watch_streak_missing:
+                    logger.info(
+                        f"Detected WATCH_STREAK for {streamer}",
+                        extra={
+                            "emoji": ":rocket:",
+                            "event": Events.get("WATCH_STREAK_PROGRESS"),
+                        }
+                    )
 
                 event_properties = {
                     "channel_id": streamer.channel_id,
