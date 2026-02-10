@@ -1,43 +1,74 @@
-FROM python:3.12-bullseye
+# Build stage to run container isolated tests
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS tester
 
-ARG BUILDX_QEMU_ENV
+WORKDIR /app
+
+# Avoid writing to pycache
+ENV PYTHONDONTWRITEBYTECODE 1
+# Output logs immediately
+ENV PYTHONUNBUFFERED 1
+
+# Only install uv dependencies here for better docker layer caching
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked --no-install-project
+
+# Copy the project files over
+COPY TwitchChannelPointsMiner ./TwitchChannelPointsMiner
+COPY tests ./tests
+COPY pyproject.toml uv.lock ./
+
+# Now install the project dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked
+
+# Run pytest
+ENTRYPOINT ["uv", "run", "pytest"]
+
+
+# Separate build stage to avoid distributing build dependencies
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
+
+# Disable python download, the image has it
+ENV UV_PYTHON_DOWNLOADS 0
+# Copy all packages
+ENV UV_LINK_MODE copy
+# Don't include dev dependencies (pytest, etc...)
+ENV UV_NO_DEV 1
+
+WORKDIR /app
+
+# Only install uv dependencies here for better docker layer caching
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    uv sync --locked --no-install-project
+
+# Copy the project files over
+COPY TwitchChannelPointsMiner ./TwitchChannelPointsMiner
+COPY assets ./assets
+COPY pyproject.toml uv.lock ./
+
+# Now tnstall the project dependencies
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --locked
+
+
+# Final build stage that runs the actual miner
+FROM python:3.12-slim-bookworm AS miner
 
 WORKDIR /usr/src/app
 
-COPY ./requirements.txt ./
+# Setup nonroot user for better security
+RUN groupadd --system --gid 997 nonroot \
+    && useradd --system --gid 997 --create-home nonroot
 
-ENV CRYPTOGRAPHY_DONT_BUILD_RUST=1
+# Copy over built project files
+COPY --from=builder --chown=nonroot:nonroot /app .
+# Copy LICENCE
+COPY --chown=nonroot:nonroot LICENSE .
 
-RUN pip install --upgrade pip
+ENV PATH="/usr/src/app/.venv/bin:$PATH"
 
-RUN apt-get update
-RUN DEBIAN_FRONTEND=noninteractive apt-get install -qq -y --fix-missing --no-install-recommends \
-    gcc \
-    libffi-dev \
-    rustc \
-    zlib1g-dev \
-    libjpeg-dev \
-    libssl-dev \
-    libblas-dev \
-    liblapack-dev \
-    make \
-    cmake \    
-    automake \
-    ninja-build \
-    g++ \
-    subversion \
-    python3-dev \
-  && if [ "${BUILDX_QEMU_ENV}" = "true" ] && [ "$(getconf LONG_BIT)" = "32" ]; then \
-        pip install -U cryptography==3.3.2; \
-     fi \
-  && pip install -r requirements.txt \
-  && pip cache purge \
-  && apt-get remove -y gcc rustc \
-  && apt-get autoremove -y \
-  && apt-get autoclean -y \
-  && apt-get clean -y \
-  && rm -rf /var/lib/apt/lists/* \
-  && rm -rf /usr/share/doc/*
+USER nonroot
 
-ADD ./TwitchChannelPointsMiner ./TwitchChannelPointsMiner
-ENTRYPOINT [ "python", "run.py" ]
+ENTRYPOINT ["python", "run.py"]
