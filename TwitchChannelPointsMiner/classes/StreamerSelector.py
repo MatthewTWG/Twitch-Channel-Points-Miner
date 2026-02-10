@@ -1,7 +1,7 @@
 import abc
 import logging
 import time
-from typing import Protocol
+from typing import Protocol, Sequence
 
 from TwitchChannelPointsMiner.classes.Settings import Priority
 from TwitchChannelPointsMiner.classes.entities.Streamer import Streamer
@@ -14,7 +14,7 @@ class StreamerSelector(abc.ABC):
     """Class for selecting streamers from a list."""
 
     @abc.abstractmethod
-    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+    def select(self, streamers: Sequence[Streamer], max_amount: int) -> list[str]:
         """
         Selects streamers from the list.
         :param streamers: The streamers to consider.
@@ -24,12 +24,12 @@ class StreamerSelector(abc.ABC):
         pass
 
 
-def priority_order(streamers: list[Streamer], max_amount: int) -> list[str]:
+def priority_order(streamers: Sequence[Streamer], max_amount: int) -> list[str]:
     return [streamer.channel_id for streamer in streamers[:max_amount]]
 
 
 def priority_points(
-    streamers: list[Streamer], max_amount: int, descending: bool
+    streamers: Sequence[Streamer], max_amount: int, descending: bool
 ) -> list[str]:
     items = [
         {"points": streamer.channel_points, "id": streamer.channel_id}
@@ -43,15 +43,15 @@ def priority_points(
     return [item["id"] for item in items][:max_amount]
 
 
-def priority_points_ascending(streamers: list[Streamer], max_amount: int) -> list[str]:
+def priority_points_ascending(streamers: Sequence[Streamer], max_amount: int) -> list[str]:
     return priority_points(streamers, max_amount, False)
 
 
-def priority_points_descending(streamers: list[Streamer], max_amount: int) -> list[str]:
+def priority_points_descending(streamers: Sequence[Streamer], max_amount: int) -> list[str]:
     return priority_points(streamers, max_amount, True)
 
 
-def priority_streak(streamers: list[Streamer], max_amount: int) -> list[str]:
+def priority_streak(streamers: Sequence[Streamer], max_amount: int) -> list[str]:
     result = []
     for streamer in streamers:
         if len(result) >= max_amount:
@@ -68,7 +68,7 @@ def priority_streak(streamers: list[Streamer], max_amount: int) -> list[str]:
     return result
 
 
-def priority_drops(streamers: list[Streamer], max_amount: int) -> list[str]:
+def priority_drops(streamers: Sequence[Streamer], max_amount: int) -> list[str]:
     # max_amount can be ignored due to 1 drop limit
     for streamer in streamers:
         if streamer.any_campaign_has_claimable_drop() is True:
@@ -76,7 +76,7 @@ def priority_drops(streamers: list[Streamer], max_amount: int) -> list[str]:
     return []
 
 
-def priority_subscribed(streamers: list[Streamer], max_amount: int) -> list[str]:
+def priority_subscribed(streamers: Sequence[Streamer], max_amount: int) -> list[str]:
     streamers_with_multiplier = [
         streamer for streamer in streamers if streamer.viewer_has_points_multiplier()
     ]
@@ -89,7 +89,7 @@ def priority_subscribed(streamers: list[Streamer], max_amount: int) -> list[str]
 
 
 class PriorityFunction(Protocol):
-    def __call__(self, streamers: list[Streamer], max_amount: int) -> list[str]: ...
+    def __call__(self, streamers: Sequence[Streamer], max_amount: int) -> list[str]: ...
 
 
 priority_functions: dict[Priority, PriorityFunction] = {
@@ -121,7 +121,7 @@ class PrioritySelector(StreamerSelector):
         else:
             self.priority_functions = priority_functions
 
-    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+    def select(self, streamers: Sequence[Streamer], max_amount: int) -> list[str]:
         selected = LimitedSet[str](max_amount)
         unselected = {streamer.channel_id: streamer for streamer in streamers}
         for priority in self.priorities:
@@ -150,7 +150,7 @@ class PriorityGroupSelector(StreamerSelector):
         self.streamers = streamers
         self.selector = selector
 
-    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+    def select(self, streamers: Sequence[Streamer], max_amount: int) -> list[str]:
         streamers_by_ids = {streamer.channel_id: streamer for streamer in streamers}
         if self.streamers is None or len(self.streamers) == 0:
             sub_streamers = streamers
@@ -171,7 +171,7 @@ class NestedSelector(StreamerSelector):
     def __init__(self, selectors: list[StreamerSelector]) -> None:
         self.selectors = selectors
 
-    def select(self, streamers: list[Streamer], max_amount: int) -> list[str]:
+    def select(self, streamers: Sequence[Streamer], max_amount: int) -> list[str]:
         selected = LimitedSet(max_amount)
         unselected = {streamer.channel_id: streamer for streamer in streamers}
         for selector in self.selectors:
@@ -188,7 +188,7 @@ class NestedSelector(StreamerSelector):
 
 
 def priority_streak_by_earliest_stream_created_at(
-    streamers: list[Streamer], max_amount: int
+    streamers: Sequence[Streamer], max_amount: int
 ) -> list[str]:
     """
     Prioritises only streamers that have streaks, ordered by ascending stream.created_at to prioritise streams that came
@@ -197,7 +197,7 @@ def priority_streak_by_earliest_stream_created_at(
     :param max_amount: The maximum amount of streamers to select.
     :return: The selected streamer ids.
     """
-    streamers.sort(
+    ordered = sorted(streamers,
         key=lambda streamer: (
             streamer.stream.created_at.timestamp()
             if streamer.stream.created_at is not None
@@ -205,4 +205,4 @@ def priority_streak_by_earliest_stream_created_at(
         ),
         reverse=False,
     )
-    return priority_streak(streamers, max_amount)
+    return priority_streak(ordered, max_amount)

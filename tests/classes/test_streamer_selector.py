@@ -689,6 +689,15 @@ class TestPrioritySelector:
         # Normalise to handle set ordering
         assert set(streamer_ids) == set(expected_ids)
 
+    def test_priority_selector_order_unchanged(self):
+        streamers = [Streamer("2", "b", settings=settings_watch_streak_true),
+                     Streamer("1", "a", settings=settings_watch_streak_true)]
+        selector = PrioritySelector(
+            [Priority.STREAK, Priority.DROPS, Priority.SUBSCRIBED, Priority.ORDER],
+        )
+        selector.select(streamers, 2)
+        assert [streamer.username for streamer in streamers] == ["2", "1"]
+
 
 class TestPriorityGroupSelector:
     basic_priorities = [Priority.STREAK, Priority.SUBSCRIBED, Priority.ORDER]
