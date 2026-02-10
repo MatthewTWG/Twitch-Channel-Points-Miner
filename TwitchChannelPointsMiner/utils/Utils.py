@@ -13,6 +13,7 @@ import requests
 from millify import millify as package_millify
 
 from TwitchChannelPointsMiner.constants import USER_AGENTS, GITHUB_url
+from TwitchChannelPointsMiner import __version__
 
 
 def millify(input, precision=2):
@@ -192,10 +193,8 @@ def init2dict(content):
 
 def check_versions():
     try:
-        current_version = init2dict(read("__init__.py"))
-        current_version = (
-            current_version["version"] if "version" in current_version else "0.0.0"
-        )
+        current_version = __version__
+        assert isinstance(current_version, str)
     except Exception:
         current_version = "0.0.0"
     try:
