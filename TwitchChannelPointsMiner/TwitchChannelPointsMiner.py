@@ -102,10 +102,20 @@ class TwitchChannelPointsMiner:
         # True if we want to use the new Hermes WebSocket API
         use_hermes: bool = False,
     ):
-        # Fixes TypeError: 'NoneType' object is not subscriptable
-        if not username or username == "your-twitch-username":
-            logger.error("Please edit your runner file (usually run.py) and try again.")
-            logger.error("No username, exiting...")
+        # Validate the user has changed default username and password
+        startup_error = None
+        if not username:
+            startup_error = "No username"
+        elif username == "your-twitch-username":
+            startup_error = "Username not changed from default"
+        elif not password:
+            startup_error = "No password"
+        elif password == "write-your-secure-psw":
+            startup_error = "Password not changed from default"
+
+        if startup_error is not None:
+            logger.error("Please edit your configuration file (run.py) and try again.")
+            logger.error(f"{startup_error}, exiting...")
             sys.exit(0)
 
         # This disables certificate verification and allows the connection to proceed, but also makes it vulnerable to man-in-the-middle (MITM) attacks.
