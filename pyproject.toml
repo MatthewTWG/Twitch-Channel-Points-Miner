@@ -1,0 +1,38 @@
+[project]
+name = "twitch-channel-points-miner"
+version = "0.0.0"
+description = "Automatically collects Twitch channel points"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "colorama>=0.4.6",
+    "emoji>=2.15.0",
+    "flask>=3.1.2",
+    "irc>=20.5.0",
+    "millify>=0.1.1",
+    "pandas>=3.0.0",
+    "pillow>=12.1.0",
+    "pre-commit>=4.5.1",
+    "python-dateutil>=2.9.0.post0",
+    "pytz>=2025.2",
+    "requests>=2.32.5",
+    "validators>=0.35.0",
+    "websocket-client>=1.9.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.408",
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "-s tests"
+filterwarnings = [
+    # Millify has some syntax warnings but still works
+    'ignore::SyntaxWarning:.*millify.*'
+]
+
+[tool.pyright]
+venv = ".venv"
+venvPath = "."
