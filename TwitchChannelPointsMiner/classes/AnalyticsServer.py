@@ -205,7 +205,6 @@ def download_assets(assets_folder, required_files):
 
 def check_assets():
     required_files = [
-        "banner.png",
         "charts.html",
         "script.js",
         "style.css",
