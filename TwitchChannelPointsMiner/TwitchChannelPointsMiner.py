@@ -203,9 +203,9 @@ class TwitchChannelPointsMiner:
         current_version, github_version = check_versions()
 
         logger.info(
-            f"Twitch Channel Points Miner v2-{current_version} (fork by rdavydov)"
+            f"Twitch Channel Points Miner-{current_version} (fork by mpforce1)"
         )
-        logger.info("https://github.com/rdavydov/Twitch-Channel-Points-Miner-v2")
+        logger.info("https://github.com/mpforce1/Twitch-Channel-Points-Miner")
 
         if github_version == "0.0.0":
             logger.error(
