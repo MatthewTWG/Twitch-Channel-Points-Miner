@@ -15,6 +15,9 @@ jobs:
       packages: write
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v6.0.2
+
       - name: Get Next Version
         id: getnextversion
         uses: ./.github/actions/get-version
@@ -22,4 +25,7 @@ jobs:
       - name: Deploy
         uses: ./.github/actions/deploy
         with:
+          docker_hub_username: ${{ secrets.DOCKER_USERNAME }}
+          docker_hub_token: ${{ secrets.DOCKER_TOKEN }}
+          ghcr_token: ${{ github.token }}
           version: ${{ steps.getnextversion.outputs.version }}

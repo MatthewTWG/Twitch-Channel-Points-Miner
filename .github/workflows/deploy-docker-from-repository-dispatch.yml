@@ -17,7 +17,13 @@ jobs:
       packages: write
 
     steps:
+      - name: Checkout source
+        uses: actions/checkout@v6.0.2
+
       - name: deploy
         uses: ./.github/actions/deploy
         with:
+          docker_hub_username: ${{ secrets.DOCKER_USERNAME }}
+          docker_hub_token: ${{ secrets.DOCKER_TOKEN }}
+          ghcr_token: ${{ github.token }}
           version: ${{ github.event.client_payload.version }}
