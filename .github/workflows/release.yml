@@ -17,6 +17,9 @@ jobs:
       contents: write # It'd be nice if we could restrict this to just releases
 
     steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3.7.0
+
       - name: Pull GHCR Images
         # Pulls images for each platform for the tag version
         run: |
