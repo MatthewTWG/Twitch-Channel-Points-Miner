@@ -33,7 +33,11 @@ class Campaign(object):
         )
         self.end_at = data.end_at
         self.start_at = data.start_at
-        self.dt_match = self.start_at < datetime.now() < self.end_at
+        self.dt_match = (
+            self.start_at.timestamp()
+            < datetime.now().timestamp()
+            < self.end_at.timestamp()
+        )
         self.in_inventory = False
         self.drops = [Drop(drop) for drop in data.time_based_drops]
 
